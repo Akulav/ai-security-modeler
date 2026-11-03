@@ -14,6 +14,23 @@ interface Props {
   onRetry: () => void;
   onLoad: () => void;
   onUnload: () => void;
+  onIdleUnload: (seconds: number) => void;
+}
+
+const IDLE_CHOICES: [number, string][] = [
+  [60, "After 1 minute idle"],
+  [300, "After 5 minutes idle"],
+  [900, "After 15 minutes idle"],
+  [1800, "After 30 minutes idle"],
+  [3600, "After 1 hour idle"],
+  [0, "Never: keep until I unload it"],
+];
+
+function idleChoices(current: number): [number, string][] {
+  // A value set in .env may not be one of the choices.
+  return IDLE_CHOICES.some(([seconds]) => seconds === current)
+    ? IDLE_CHOICES
+    : [[current, `After ${current} seconds idle`], ...IDLE_CHOICES];
 }
 
 export function SetupProgress({ llm, onCancel, onRetry }: Pick<Props, "llm" | "onCancel" | "onRetry">) {
@@ -57,7 +74,9 @@ function memoryText(llm: LlmStatus): string {
   return `In memory: ${gigabytes(used)}, ${Math.round((onGpu / (used || 1)) * 100)}% on the GPU.`;
 }
 
-export default function ModelManager({ llm, disabled, onSelect, onPull, onDelete, onCancel, onRetry, onLoad, onUnload }: Props) {
+export default function ModelManager({
+  llm, disabled, onSelect, onPull, onDelete, onCancel, onRetry, onLoad, onUnload, onIdleUnload,
+}: Props) {
   const [name, setName] = useState("");
   const installed = llm?.models ?? [];
   const selectedInstalled = installed.some((model) => model.name === llm?.selected);
@@ -100,7 +119,7 @@ export default function ModelManager({ llm, disabled, onSelect, onPull, onDelete
           <p className="hint" aria-live="polite">{memoryText(llm)}</p>
           <span>
             {llm.loaded.length === 0 && (
-              <button type="button" className="btn small" disabled={disabled || llm.busy} onClick={onLoad} title="Start the LLM and keep the selected model in memory until you unload it">
+              <button type="button" className="btn small" disabled={disabled || llm.busy} onClick={onLoad} title="Start the LLM and put the selected model in memory, ready for analysis">
                 <Power size={12} /> Load
               </button>
             )}
@@ -111,6 +130,17 @@ export default function ModelManager({ llm, disabled, onSelect, onPull, onDelete
             )}
           </span>
         </div>
+      )}
+      {llm && (
+        <label>
+          Free RAM and VRAM
+          <select value={llm.idle_unload_seconds} onChange={(e) => onIdleUnload(Number(e.target.value))}>
+            {idleChoices(llm.idle_unload_seconds).map(([seconds, label]) => (
+              <option key={seconds} value={seconds}>{label}</option>
+            ))}
+          </select>
+          <span className="hint">The model leaves memory once nothing has used it for this long, and reloads when needed.</span>
+        </label>
       )}
       {llm && !llm.busy && !selectedInstalled && llm.available && (
         <button type="button" className="btn" onClick={() => onPull(llm.selected)} title={llm.selected}>
@@ -132,7 +162,7 @@ export default function ModelManager({ llm, disabled, onSelect, onPull, onDelete
               <Download size={14} /> Get
             </button>
           </span>
-          <span className="hint">Downloaded into this project's llm folder, then selected.</span>
+          <span className="hint">Downloaded into the app's llm folder, then selected.</span>
         </label>
       </form>
     </div>

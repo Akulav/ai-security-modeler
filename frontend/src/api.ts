@@ -16,7 +16,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers: init?.body ? { "Content-Type": "application/json" } : undefined,
     });
   } catch {
-    throw new ApiError("The backend isn't reachable. Is run.bat still running?", 0);
+    throw new ApiError("The backend isn't reachable. Is Security Modeler still running? Look for its icon in the system tray.", 0);
   }
   if (!response.ok) {
     throw new ApiError(await errorMessage(response), response.status);
@@ -62,6 +62,7 @@ export const api = {
   retryLlm: () => request<void>("/llm/retry", { method: "POST" }),
   loadLlm: () => request<unknown>("/llm/load", { method: "POST" }),
   unloadLlm: () => request<void>("/llm/unload", { method: "POST" }),
+  setIdleUnload: (seconds: number) => request<void>("/llm/idle", json("POST", { seconds })),
   finishResearch: () => request<void>("/analysis/finish-research", { method: "POST" }),
   latestReport: () => request<AnalysisReport | null>("/analysis/latest"),
 

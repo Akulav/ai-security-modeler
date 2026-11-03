@@ -26,7 +26,7 @@ export default function Sidebar({ catalog, onCreate }: Props) {
         <div>
           <strong>Security Modeler</strong>
           <span>personal infrastructure map</span>
-          <span className="credit">made by Akulav</span>
+          <span className="credit">made by Akulav · {__APP_VERSION__ === "dev" ? "dev" : `v${__APP_VERSION__}`}</span>
         </div>
       </div>
 

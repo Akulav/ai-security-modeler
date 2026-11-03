@@ -20,11 +20,41 @@ cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 800
 cd frontend; npm run dev
 ```
 
-To avoid the large LLM download during development, set `LLM_AUTO_SETUP=false` in `.env`.
+To avoid the large LLM download during development, set `LLM_AUTO_SETUP=false` in `.env`. Run from source, the app keeps its data in the project folder (`data`, `llm`, `.env`).
+
+## The desktop app
+
+`launcher/` is the Rust program that becomes `SecurityModeler.exe`. Its build packs `backend/app` and `frontend/dist` into the exe, so build the frontend first. You need Rust (stable) and the Windows SDK, which comes with Visual Studio's C++ build tools.
+
+```powershell
+cd frontend; npm run build; cd ..\launcher; cargo build --release
+```
+
+The exe is `launcher\target\release\SecurityModeler.exe`. To try it without touching your real data folder, point it at a test folder first:
+
+```powershell
+$env:SECURITY_MODELER_HOME = "$env:TEMP\sm-test"; .\launcher\target\release\SecurityModeler.exe
+```
+
+On start it unpacks the app into the data folder's `app` folder, and gets uv, Python and the packages only when they're missing or changed. It runs the backend with `SECURITY_MODELER_HOME` set, so the backend keeps its data there too. The launcher puts the backend in a Windows job object, so Quit, a crash or Task Manager ending the launcher all end the backend, Ollama and its model runners. Logs are in the data folder's `logs`.
+
+The icon is drawn by `launcher/assets/make_icon.py`. Run it again after changing it.
+
+## Releases
+
+`.github/workflows/release.yml` runs on every push to `main`. It tests the backend, builds the frontend and the exe, then publishes a GitHub release tagged with the next version. Versions come from tags, so there's nothing to edit or commit by hand. The commit messages since the last release decide the next one:
+
+| Commits include | Version change |
+|---|---|
+| `BREAKING CHANGE` in a body, or `!` after the type, such as `feat!:` | Major |
+| A message starting with `feat:` | Minor |
+| Anything else | Patch |
+
+To choose the change yourself, run the workflow from the Actions tab and pick one. Add `[skip release]` to a commit message to build without releasing. Pull requests are tested and built, and their exe is attached to the run, but they aren't released.
 
 ## Checks
 
-Run both before opening a pull request:
+Run these before opening a pull request. The release workflow runs them too.
 
 ```powershell
 cd backend; .venv\Scripts\python.exe -m pytest

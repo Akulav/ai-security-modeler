@@ -828,6 +828,7 @@ export default function App() {
           onRetryLlm={() => llmAction(api.retryLlm)}
           onLoadLlm={() => llmAction(api.loadLlm)}
           onUnloadLlm={() => llmAction(api.unloadLlm)}
+          onIdleUnload={(seconds) => llmAction(() => api.setIdleUnload(seconds))}
           onWebSearch={setWebSearch}
           onRun={runAnalysis}
           onStop={() => abort.current?.abort()}

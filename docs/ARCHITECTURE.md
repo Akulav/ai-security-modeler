@@ -1,12 +1,13 @@
 # Architecture
 
-The app is one local process: FastAPI serves the API and the built React frontend from `127.0.0.1:8000`, and starts a portable Ollama on a free port.
+The desktop launcher starts one local backend process: FastAPI serves the API and the built React frontend from `127.0.0.1:8000`, and starts a portable Ollama on a free port.
 
 ```text
-Browser (React Flow canvas)
-   │  REST and streamed NDJSON
-   ▼
-FastAPI ──► SQLite (data/modeler.db)
+SecurityModeler.exe (tray icon; sets up Python, ends everything on Quit)
+   ├── opens ──► Browser (React Flow canvas)
+   │                │  REST and streamed NDJSON
+   │                ▼
+   └── starts, in a job object ──► FastAPI ──► SQLite (data/modeler.db)
    ├──► Graph engine: deterministic findings, no AI
    ├──► Ollama (llm/, local only) ──► web search tool ──► DuckDuckGo
    ├──► HaveIBeenPwned (optional)
@@ -31,14 +32,24 @@ FastAPI ──► SQLite (data/modeler.db)
 
 **Apps nodes are containers.** The engine replaces an Apps node with its device, so apps depend directly on the device and containers never appear in results.
 
+**Code and data live apart.** `config.py` reads `SECURITY_MODELER_HOME` for the data folder (`.env`, `data`, `llm`). The launcher sets it to its own folder, so replacing the app's code on an update never touches your map or models. Run from source, it defaults to the project folder.
+
+**The model frees memory by itself.** Every request to Ollama carries `keep_alive` set to the idle limit, so Ollama unloads the model once that much time has passed with no requests, and its runner process exits. Quitting goes further: the backend stops Ollama, then the launcher ends its job object, which ends every process the app started.
+
 **Least data to the model.** `redact.py` masks addresses before anything reaches the LLM, because a model that can search the web could otherwise leak them. Search queries are also checked before sending.
 
 ## Code map
 
 ```text
+launcher/              The desktop app, in Rust
+  build.rs             Packs backend/app and frontend/dist into the exe, adds the icon
+  src/main.rs          Tray icon, menu and quitting
+  src/setup.rs         Unpacks the app, gets uv, Python and packages
+  src/server.rs        Starts and talks to the backend
+  src/win.rs           Job object, single instance, message boxes
 backend/app/
   main.py              App setup, security middleware, serves the frontend
-  config.py            Settings from .env
+  config.py            Settings from .env, data folder
   database.py          SQLite engine and startup upgrades
   models.py            Tables: nodes, edges, app_settings, saved_answers, analysis_reports
   schemas.py           Request and response validation
@@ -49,6 +60,7 @@ backend/app/
     graph.py           Nodes, edges, blast radius, import and export
     analysis.py        Analysis, questions, PDF download
     llm.py             Runtime status and model management
+    launcher.py        Quit request from the desktop launcher
     hibp.py            Breach checks
   services/
     graph_engine.py    Blast radius, findings
@@ -68,7 +80,7 @@ frontend/src/
   components/          Nodes, edges, panels, pickers and forms
 ```
 
-These folders are created at run time and never committed: `data/`, `llm/`, `frontend/dist/` and `backend/.venv/`.
+These folders are created at run time and never committed: `data/`, `llm/`, `frontend/dist/`, `backend/.venv/` and `launcher/target/`.
 
 ## API
 
@@ -92,7 +104,9 @@ All routes are under `/api`. Interactive documentation is at http://127.0.0.1:80
 | `GET /llm/status` | Runtime and model status |
 | `POST /llm/select`, `POST /llm/pull`, `DELETE /llm/models` | Manage models |
 | `POST /llm/cancel`, `POST /llm/retry` | Pause a download, or retry setup |
-| `POST /llm/load`, `POST /llm/unload` | Keep the model in memory, or free it and stop the runtime |
+| `POST /llm/load`, `POST /llm/unload` | Put the model in memory, or free it and stop the runtime |
+| `POST /llm/idle` | How long an unused model stays in memory, in seconds (0: until unloaded) |
+| `POST /launcher/quit` | Stop the runtime before the launcher quits. Needs the launcher's token. |
 | `GET /hibp/status`, `POST /hibp/check/{id}`, `POST /hibp/advice/{id}` | Breach checks |
 
 Streamed routes return newline-delimited JSON events such as `status`, `search`, `answer` and `done`.

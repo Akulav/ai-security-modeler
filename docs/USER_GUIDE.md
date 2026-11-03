@@ -113,18 +113,20 @@ Add a HaveIBeenPwned key to `.env` and restart. Saving a new address on a node t
 
 In the analysis panel, under **Use another model**, enter an Ollama name such as `qwen3` or `hf.co/owner/repo-GGUF:Q4_K_M`. The app downloads and selects it, and remembers your choice. You can also switch between downloaded models or delete them there.
 
-**Free or reserve memory.** In the analysis panel, **Load** starts the LLM and keeps the selected model in memory, so answers start faster, until you click **Unload**. **Unload** frees the model's memory and stops the LLM; your downloaded files stay on disk. Without **Load**, the LLM still runs, and a model leaves memory about 5 minutes after its last use. These buttons are disabled during an analysis or question. If you use your own Ollama, **Unload** frees its models but leaves it running.
+**Free or reserve memory.** In the analysis panel, **Load** starts the LLM and puts the selected model in memory, so the next answer starts faster. **Unload** frees the model's memory and stops the LLM; your downloaded files stay on disk. These buttons are disabled during an analysis or question. If you use your own Ollama, **Unload** frees its models but leaves it running.
+
+**Free RAM and VRAM** sets how long the model stays in memory once nothing is using it: from one minute (the default) to an hour, or never. Every request restarts the timer, so it never unloads in the middle of an analysis. It loads again by itself the next time it's needed. The tray menu's **Unload the model now** frees it straight away, and **Quit** stops the LLM entirely.
 
 ## Troubleshooting
 
 | Problem | What to do |
 |---|---|
-| Scripts are blocked | Run `Set-ExecutionPolicy -Scope Process Bypass` in that window. |
-| The page breaks after an update | Restart with `run.bat`, then reload. New frontends need the matching backend. |
-| An error mentions a missing Python package after an update | Run `setup.bat` again. |
-| "The local LLM isn't running" | Click **Load** in the analysis panel, or **Retry** if setup failed. See `llm/ollama.log`. |
+| Nothing seems to happen on first start | It's setting up, which takes a minute or two. Hover over the tray icon to see the step. |
+| The app says it couldn't start | Check your internet connection, then choose **Try again** in the tray menu. The tray's **Open logs** has the details. |
+| The page breaks after an update | Quit from the tray icon, start the new version, then reload the page. |
+| "The local LLM isn't running" | Click **Load** in the analysis panel, or **Retry** if setup failed. See `llm\ollama.log` in the data folder. |
 | Context size error from the model | Raise `OLLAMA_NUM_CTX` in `.env`. |
 | Web searches fail | DuckDuckGo limits rapid queries. Failed searches are retried and then skipped, so the run continues. |
-| Running two copies | Don't. Starting a second copy stops the first one's LLM runtime. |
+| Starting it twice | Safe. A second start just opens the running app in your browser. |
 
-Upgrades back up your database before changing its structure, to `data/modeler.db.before-upgrade-<date>.bak`.
+Upgrades back up your database before changing its structure, to `data\modeler.db.before-upgrade-<date>.bak` in the data folder.

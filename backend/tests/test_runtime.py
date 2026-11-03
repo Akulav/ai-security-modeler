@@ -171,19 +171,33 @@ def _fake_ollama(installed=("m:latest",), generate_status=200):
     return handler, calls
 
 
-def test_load_keeps_the_model_in_memory_with_the_analysis_context(monkeypatch):
+def test_load_keeps_the_model_for_the_idle_limit_with_the_analysis_context(monkeypatch):
     monkeypatch.setattr(runtime.settings, "llm_auto_setup", False)
     handler, calls = _fake_ollama()
     manager = _manager(handler)
+    manager.idle_seconds = 60
 
     async def go():
         manager.load("m:latest")
         await manager._task
 
     asyncio.run(go())
-    assert manager.phase == "ready" and manager.keep_loaded is True
-    assert calls[0]["keep_alive"] == -1 and calls[0]["options"]["num_ctx"] == runtime.settings.ollama_num_ctx
+    assert manager.phase == "ready"
+    assert calls[0]["keep_alive"] == 60 and calls[0]["options"]["num_ctx"] == runtime.settings.ollama_num_ctx
     assert "prompt" not in calls[0]
+
+
+def test_no_idle_limit_keeps_the_model_until_unloaded():
+    manager = RuntimeManager()
+    manager.idle_seconds = 0
+    assert manager.keep_alive == -1
+
+
+def test_changing_the_idle_limit_restarts_a_loaded_models_timer(monkeypatch):
+    handler, calls = _fake_ollama()
+    manager = _manager(handler)
+    asyncio.run(manager.set_idle_seconds(300))
+    assert manager.idle_seconds == 300 and calls[0]["model"] == "m:latest" and calls[0]["keep_alive"] == 300
 
 
 def test_failed_load_reports_the_reason(monkeypatch):
@@ -196,18 +210,17 @@ def test_failed_load_reports_the_reason(monkeypatch):
         await manager._task
 
     asyncio.run(go())
-    assert manager.phase == "error" and "out of memory" in manager.message and manager.keep_loaded is False
+    assert manager.phase == "error" and "out of memory" in manager.message
 
 
 def test_unload_frees_models_but_leaves_someone_elses_server_running(monkeypatch):
     monkeypatch.setattr(runtime.settings, "llm_auto_setup", False)
     handler, calls = _fake_ollama()
     manager = _manager(handler)
-    manager.keep_loaded = True
     manager.phase = "ready"
     asyncio.run(manager.unload())
     assert calls == [{"model": "m:latest", "keep_alive": 0, "options": {"num_ctx": runtime.settings.ollama_num_ctx}}]
-    assert manager.phase == "ready" and manager.keep_loaded is False
+    assert manager.phase == "ready"
 
 
 def test_unload_stops_the_runtime_this_app_started(monkeypatch, tmp_path):
@@ -228,7 +241,7 @@ def test_status_after_stopping_is_not_an_error(monkeypatch):
     assert status["phase"] == "stopped" and status["available"] is False and status["loaded"] == []
 
 
-def test_chat_keeps_the_model_only_after_load(monkeypatch):
+def test_every_chat_restarts_the_idle_timer(monkeypatch):
     from app.services import llm
     sent = []
 
@@ -240,10 +253,37 @@ def test_chat_keeps_the_model_only_after_load(monkeypatch):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             await llm._chat(client, {"model": "m", "messages": []})
 
+    monkeypatch.setattr(runtime.manager, "idle_seconds", 60)
     asyncio.run(chat())
-    monkeypatch.setattr(runtime.manager, "keep_loaded", True)
+    monkeypatch.setattr(runtime.manager, "idle_seconds", 0)
     asyncio.run(chat())
-    assert "keep_alive" not in sent[0] and sent[1]["keep_alive"] == -1
+    assert sent[0]["keep_alive"] == 60 and sent[1]["keep_alive"] == -1
+
+
+def test_idle_limit_api_saves_and_validates(client, monkeypatch):
+    applied = []
+
+    async def apply(seconds):
+        applied.append(seconds)
+
+    monkeypatch.setattr(runtime.manager, "set_idle_seconds", apply)
+    assert client.get("/api/llm/status").json()["idle_unload_seconds"] == runtime.manager.idle_seconds
+    assert client.post("/api/llm/idle", json={"seconds": -1}).status_code == 422
+    assert client.post("/api/llm/idle", json={"seconds": 300}).status_code == 204
+    from app.routers import llm as llm_router
+    assert applied == [300] and llm_router.stored_idle_seconds() == 300
+
+
+def test_only_the_launcher_can_quit(client, monkeypatch):
+    stopped = []
+    monkeypatch.setattr(runtime.manager, "shutdown", lambda: stopped.append(True))
+    monkeypatch.setattr(runtime.settings, "launcher_token", "")
+    assert client.post("/api/launcher/quit").status_code == 403
+    monkeypatch.setattr(runtime.settings, "launcher_token", "secret")
+    assert client.post("/api/launcher/quit", headers={"X-Launcher-Token": "wrong"}).status_code == 403
+    assert stopped == []
+    assert client.post("/api/launcher/quit", headers={"X-Launcher-Token": "secret"}).status_code == 204
+    assert stopped == [True]
 
 
 def test_load_and_retry_routes_can_start_background_work(client, monkeypatch):

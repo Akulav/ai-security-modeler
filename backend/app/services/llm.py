@@ -106,8 +106,8 @@ async def _chat(client: httpx.AsyncClient, payload: dict) -> dict:
     # Ollama's default context depends on VRAM and can be too small for even a modest graph.
     # Every call uses the same size, because changing it forces the model to reload.
     options = {**payload.get("options", {}), "num_ctx": settings.ollama_num_ctx}
-    if manager.keep_loaded:
-        payload = {**payload, "keep_alive": -1}
+    # Restarts the idle timer, so the model is freed once nothing has used it for a while.
+    payload = {**payload, "keep_alive": manager.keep_alive}
     try:
         # Thinking is off because it made runs take over three times as long on a mid-range GPU,
         # and the engine's findings have already done the reasoning about the graph.

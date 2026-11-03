@@ -2,7 +2,7 @@
 
 Map your devices, accounts, network and data as an interactive graph, then see exactly what breaks when one of them is lost or hacked. Everything runs on your own machine, including the AI.
 
-**Windows only for now.** Automatic LLM setup and the launch scripts target Windows.
+**Windows only for now.** The desktop app and automatic LLM setup target Windows.
 
 **View only.** This code is published for reading. Running, copying or modifying it requires written permission. See [License](#license).
 
@@ -28,18 +28,33 @@ Most personal security advice is generic. This works from your own setup, and an
 
 ## Quick start
 
-These steps are for the copyright holder and anyone given written permission. You need [Python 3.11+](https://www.python.org/downloads/) and [Node.js 20+](https://nodejs.org/). Double-click `run.bat` in the project folder. The first time, it installs everything first (you can also run `setup.bat` on its own).
+These steps are for the copyright holder and anyone given written permission.
 
-Closing the window stops the app and the local LLM runtime it started. The app opens at http://127.0.0.1:8000. Click **Load sample graph** on the empty canvas to try it.
+1. Download `SecurityModeler.exe` from the [latest release](https://github.com/Akulav/ai-security-modeler/releases/latest).
+2. Run it. Nothing else needs installing: on first start it downloads its own Python and packages, which takes a minute or two.
+3. The app opens in your browser at http://127.0.0.1:8000. Click **Load sample graph** on the empty canvas to try it.
+
+The app runs in the background with an icon in the system tray. Click the icon to open the app. Right-click it to unload the model, open the data or logs folder, or **Quit**. Quitting stops the local LLM, which frees all the RAM and VRAM it used.
+
+`SecurityModeler.exe --background` starts it without opening the browser, for example from a startup shortcut. `SecurityModeler.exe --quit` quits a running copy.
+
+To run from source instead, see [Contributing](CONTRIBUTING.md).
 
 ### First start downloads about 18 GB
 
-The app sets up its LLM in the background, with progress shown on the canvas, and you can use the app meanwhile. Interrupted downloads resume, and later starts reuse the files.
+The app sets up its LLM in the background, with progress shown on the canvas and in the tray menu, and you can use the app meanwhile. Interrupted downloads resume, and later starts reuse the files.
 
 | Download | Size | Saved to |
 |---|---|---|
-| Portable Ollama | about 1.7 GB | `llm/ollama` |
-| Default model | about 16.3 GB | `llm/models` |
+| Python and the app's packages | about 100 MB | `python`, `packages` |
+| Portable Ollama | about 1.7 GB | `llm\ollama` |
+| Default model | about 16.3 GB | `llm\models` |
+
+Everything is saved in the data folder, `%LOCALAPPDATA%\SecurityModeler`. To keep it elsewhere, for example on a bigger drive, set the `SECURITY_MODELER_HOME` environment variable to another folder before starting the app.
+
+### Memory
+
+The model leaves RAM and VRAM after a minute without use, and loads again when needed. Change this under **Free RAM and VRAM** in the analysis panel, from one minute to never.
 
 The default model runs best with about 16 GB of video memory and 32 GB of RAM. On smaller machines, choose a smaller model in the analysis panel, or skip the AI: calculated findings, question lists and the PDF work without it.
 
@@ -56,18 +71,18 @@ The default is an "abliterated" model, meaning its refusal behaviour has been re
 
 | Data | Where it goes |
 |---|---|
-| Your map, including full email and IP addresses | Stored **unencrypted** in `data/modeler.db`. Use disk encryption such as BitLocker. |
+| Your map, including full email and IP addresses | Stored **unencrypted** in `data\modeler.db` in the data folder. Use disk encryption such as BitLocker. |
 | Passwords | Nowhere. The app has no field for them, only for the password *type*. |
 | Data sent to the LLM | Only the local runtime. Email addresses are reduced to their domain, and IP addresses are removed. Node names and notes are sent, with any addresses in them masked. |
 | Web search queries | DuckDuckGo. Queries are shown in the log, and those containing your addresses are blocked. **They can still name services you use**, so untick "Let the model search the web" to prevent that. |
 | Email address on a breach check | HaveIBeenPwned, automatically when you save a new address while a key is set. |
-| First-run downloads | Fetched from GitHub and Hugging Face. Your data isn't sent. |
+| First-run downloads | Fetched from GitHub, Python's package index and Hugging Face. Your data isn't sent. |
 
 The server listens only on `127.0.0.1` and has no login, so don't expose it to your network.
 
 ## Configuration
 
-Copy `.env.example` to `.env` (`setup.bat` does this for you), then restart the app after any change.
+Settings are in `.env` in the data folder, which the app creates on first start. Restart the app after any change: right-click the tray icon, **Quit**, then start it again.
 
 | Setting | Default | Purpose |
 |---|---|---|
@@ -77,11 +92,15 @@ Copy `.env.example` to `.env` (`setup.bat` does this for you), then restart the 
 | `OLLAMA_MODEL` | `hf.co/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF` | Model used until you pick another in the app. Needs tool support for web research. |
 | `OLLAMA_TIMEOUT_SECONDS` | `1800` | How long to wait for one LLM call. |
 | `OLLAMA_NUM_CTX` | `16384` | Context size. Raise it for very large maps. Higher values use more memory and run slower. |
+| `LLM_IDLE_UNLOAD_SECONDS` | `60` | Seconds without use before the model leaves memory. `0` keeps it until you unload it. The choice in the analysis panel overrides this. |
+
+The launcher itself reads two environment variables: `SECURITY_MODELER_HOME` for the data folder, and `SECURITY_MODELER_PORT` for the port it prefers (8000). If that port is taken, it uses a free one.
 
 ## Tech stack
 
 | Layer | Choice |
 |---|---|
+| Desktop launcher | Rust, with a system tray icon |
 | Frontend | React, TypeScript, Vite, React Flow |
 | Backend | Python, FastAPI, SQLAlchemy, ReportLab |
 | Database | SQLite |
@@ -90,7 +109,7 @@ Copy `.env.example` to `.env` (`setup.bat` does this for you), then restart the 
 
 ## Uninstalling
 
-Delete the project folder. To keep the app but remove only the LLM and its models, delete the `llm` folder. It downloads again on the next start unless you set `LLM_AUTO_SETUP=false`.
+Quit the app from its tray icon, then delete `SecurityModeler.exe` and the data folder, `%LOCALAPPDATA%\SecurityModeler`. To keep the app but remove only the LLM and its models, delete the `llm` folder inside it. It downloads again on the next start unless you set `LLM_AUTO_SETUP=false`.
 
 ## License
 

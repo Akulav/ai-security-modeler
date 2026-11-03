@@ -1,4 +1,4 @@
-"""Portable LLM runtime: downloads Ollama into the project folder, runs it, and manages models.
+"""Portable LLM runtime: downloads Ollama into the data folder, runs it, and manages models.
 
 Everything lives under llm/ (binaries, models, Ollama's home) and it runs on a free port chosen
 at startup, so it can't clash with an Ollama already on the system. Deleting that folder
@@ -19,9 +19,9 @@ from pathlib import Path
 
 import httpx
 
-from ..config import PROJECT_ROOT, settings
+from ..config import DATA_ROOT, settings
 
-LLM_DIR = PROJECT_ROOT / "llm"
+LLM_DIR = DATA_ROOT / "llm"
 BIN_DIR = LLM_DIR / "ollama"
 MODELS_DIR = LLM_DIR / "models"
 HOME_DIR = LLM_DIR / "home"
@@ -183,14 +183,25 @@ class RuntimeManager:
         self.completed = 0
         self.total = 0
         self.pulling_model: str | None = None
-        # After Load, every request asks Ollama to keep the model, or it would drop it after 5 minutes.
-        self.keep_loaded = False
+        # How long the model stays in memory after its last request. 0 means until it's unloaded.
+        self.idle_seconds = settings.llm_idle_unload_seconds
         self._process: subprocess.Popen | None = None
         self._task: asyncio.Task | None = None
 
     @property
     def busy(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    @property
+    def keep_alive(self) -> int:
+        """What every request tells Ollama, which then frees the model once it's been idle that long."""
+        return self.idle_seconds if self.idle_seconds > 0 else -1
+
+    async def set_idle_seconds(self, seconds: int) -> None:
+        """Changes the idle limit, including for a model already in memory, whose timer restarts."""
+        self.idle_seconds = seconds
+        for model in await self.loaded():
+            await self._keep_alive(model["name"], self.keep_alive)
 
     def _client(self, **kwargs) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=self.transport, **kwargs)
@@ -222,7 +233,7 @@ class RuntimeManager:
         self._task = asyncio.create_task(self._guarded(work()))
 
     def load(self, model: str) -> None:
-        """Starts the runtime if needed and keeps the model in memory until it's unloaded."""
+        """Starts the runtime if needed and puts the model in memory, where it stays while in use."""
         if self.busy:
             raise RuntimeError_("The LLM is busy. Try again when it finishes.")
         if settings.llm_auto_setup and not self._alive():
@@ -235,8 +246,7 @@ class RuntimeManager:
             if model not in await self.installed_names():
                 await self._pull(model)
             self._set("loading", f"Loading {model} into memory")
-            await self._keep_alive(model, -1)
-            self.keep_loaded = True
+            await self._keep_alive(model, self.keep_alive)
 
         self._task = asyncio.create_task(self._guarded(work()))
 
@@ -244,7 +254,6 @@ class RuntimeManager:
         """Frees the model's memory. A runtime this app started is stopped too, which frees the rest."""
         if self.busy:
             raise RuntimeError_("The LLM is busy. Try again when it finishes.")
-        self.keep_loaded = False
         if settings.llm_auto_setup:
             if self._alive():
                 await asyncio.to_thread(_kill_tree, self._process.pid)

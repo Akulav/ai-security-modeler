@@ -32,6 +32,7 @@ interface Props {
   onRetryLlm: () => void;
   onLoadLlm: () => void;
   onUnloadLlm: () => void;
+  onIdleUnload: (seconds: number) => void;
   onWebSearch: (enabled: boolean) => void;
   onRun: () => void;
   onStop: () => void;
@@ -93,6 +94,7 @@ export default function AnalysisPanel(props: Props) {
           disabled={running || asking}
           onLoad={props.onLoadLlm}
           onUnload={props.onUnloadLlm}
+          onIdleUnload={props.onIdleUnload}
           onSelect={props.onSelectModel}
           onPull={props.onPullModel}
           onDelete={props.onDeleteModel}

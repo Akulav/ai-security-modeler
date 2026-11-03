@@ -175,6 +175,7 @@ export interface LlmStatus {
   loaded: { name: string; size: number; size_vram: number }[];
   selected: string;
   default: string;
+  idle_unload_seconds: number;
 }
 
 export interface Highlight {
