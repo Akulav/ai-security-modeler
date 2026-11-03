@@ -1,8 +1,8 @@
 name: Build and release
 
-# Every push to main that changes the app is tested, built and released with the next version.
-# Versions come from git tags (vX.Y.Z), so nothing is committed back. Pull requests are tested
-# and built, and their exe is attached to the run, but not released.
+# Every push to main that changes the app is tested, built for Windows and Linux, and released with
+# the next version. Versions come from git tags (vX.Y.Z), so nothing is committed back. Pull
+# requests are tested and built, and their builds are attached to the run, but not released.
 on:
   push:
     branches: [main]
@@ -25,8 +25,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: windows-latest
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,7 +37,6 @@ jobs:
 
       - name: Work out the version
         id: version
-        shell: bash
         env:
           BUMP: ${{ inputs.bump || 'auto' }}
           PR: ${{ github.event.number }}
@@ -69,6 +71,15 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
 
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -81,6 +92,12 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pytest -q
 
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -90,7 +107,7 @@ jobs:
       - name: Build the frontend
         working-directory: frontend
         env:
-          APP_VERSION: ${{ steps.version.outputs.version }}
+          APP_VERSION: ${{ needs.version.outputs.version }}
         run: |
           npm ci --no-fund --no-audit
           npm run build
@@ -105,7 +122,7 @@ jobs:
         shell: bash
         working-directory: launcher
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           # Only the package's own version line, the first in the file.
@@ -120,17 +137,132 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SecurityModeler-${{ steps.version.outputs.version }}
+          name: windows
           path: dist/*
 
+  linux:
+    needs: version
+    # The oldest supported runner, so the build runs on older distributions too: a program only
+    # needs a glibc at least as new as the one it was built against.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the libraries the tray icon needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build the frontend
+        working-directory: frontend
+        env:
+          APP_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher
+
+      - name: Build the launcher
+        working-directory: launcher
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" Cargo.toml
+          grep -m1 '^version' Cargo.toml
+          cargo build --release
+
+      - name: Check that it starts
+        env:
+          SECURITY_MODELER_HOME: ${{ runner.temp }}/smoke
+        run: |
+          set -euo pipefail
+          launcher/target/release/SecurityModeler --version
+          # The real first-run path, without a desktop: setup, start, answer, quit.
+          timeout 600 launcher/target/release/SecurityModeler --headless > smoke.log 2>&1 &
+          for _ in $(seq 1 120); do
+            if grep -q "Running at" smoke.log; then break; fi
+            sleep 5
+          done
+          cat smoke.log
+          url=$(grep -o 'http://127.0.0.1:[0-9]*' smoke.log | head -n1)
+          test -n "$url"
+          curl -fsS "$url/api/catalog" > /dev/null
+          curl -fsS "$url/" | grep -q '<div id="root">'
+          launcher/target/release/SecurityModeler --quit
+          for _ in $(seq 1 30); do
+            pgrep -f "SecurityModeler --headless" > /dev/null || break
+            sleep 1
+          done
+          ! pgrep -f "SecurityModeler --headless"
+          echo "Started, served the app and quit cleanly."
+
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="SecurityModeler-$VERSION-linux-x86_64"
+          mkdir -p "dist/$name"
+          cp launcher/target/release/SecurityModeler "dist/$name/"
+          cp launcher/linux/install.sh launcher/linux/security-modeler.desktop LICENSE "dist/$name/"
+          cp launcher/assets/icon.png "dist/$name/security-modeler.png"
+          chmod +x "dist/$name/SecurityModeler" "dist/$name/install.sh"
+          cd dist
+          tar -czf "$name.tar.gz" "$name"
+          rm -r "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          cat "$name.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+
+  release:
+    needs: [version, test, windows, linux]
+    if: github.event_name != 'pull_request' && needs.version.outputs.release == 'true' && !contains(github.event.head_commit.message, '[skip release]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Publish the release
-        if: github.event_name != 'pull_request' && steps.version.outputs.release == 'true' && !contains(github.event.head_commit.message, '[skip release]')
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          gh release create "v$VERSION" dist/SecurityModeler.exe dist/SecurityModeler.exe.sha256 \
+          set -euo pipefail
+          ls -l dist
+          cat > notes.md <<EOF
+          ## Download
+
+          | System | File |
+          |---|---|
+          | Windows 10 or 11 (x64) | \`SecurityModeler.exe\`: run it |
+          | Linux (x86-64) | \`SecurityModeler-$VERSION-linux-x86_64.tar.gz\`: unpack it, then run \`./install.sh\` |
+
+          Check a download against its \`.sha256\` file. First start downloads Python, the local LLM runtime and the default model, about 18 GB in total. See the [README](https://github.com/$REPO#readme) for details.
+
+          Made by Akulav.
+          EOF
+          gh release create "v$VERSION" dist/* \
+            --repo "$REPO" \
             --title "Security Modeler $VERSION" \
             --target "$GITHUB_SHA" \
+            --notes-file notes.md \
             --generate-notes

@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 380" width="1280" height="380" role="img" aria-label="Security Modeler, made by Akulav">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b111c"/>
+      <stop offset="1" stop-color="#070b13"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.2" cy="0.1" r="0.7">
+      <stop offset="0" stop-color="#34d399" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#34d399" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0.95" cy="1" r="0.6">
+      <stop offset="0" stop-color="#38bdf8" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1.2" cy="1.2" r="1.2" fill="#26344a"/>
+    </pattern>
+    <clipPath id="card"><rect width="1280" height="380" rx="22"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="1280" height="380" fill="url(#bg)"/>
+    <rect width="1280" height="380" fill="url(#dots)" opacity="0.55"/>
+    <rect width="1280" height="380" fill="url(#glow)"/>
+    <rect width="1280" height="380" fill="url(#glow2)"/>
+
+    <!-- A small dependency map: a password manager at the centre, with what relies on it. -->
+    <g fill="none" stroke-width="2">
+      <path d="M1000 190 C 1060 130, 1110 110, 1150 96" stroke="#fbbf24" opacity="0.75"/>
+      <path d="M1000 190 C 1070 190, 1120 205, 1180 214" stroke="#fbbf24" opacity="0.75"/>
+      <path d="M1000 190 C 1050 250, 1090 290, 1130 306" stroke="#fbbf24" opacity="0.75"/>
+      <path d="M1000 190 C 940 140, 900 110, 850 96" stroke="#38bdf8" opacity="0.7" stroke-dasharray="7 5"/>
+      <path d="M1000 190 C 930 230, 890 270, 840 300" stroke="#f472b6" opacity="0.7" stroke-dasharray="7 5"/>
+      <path d="M850 96 C 800 70, 770 60, 735 60" stroke="#a3e635" opacity="0.6" stroke-dasharray="2 5"/>
+    </g>
+    <g font-family="'Segoe UI', 'DejaVu Sans', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#e4ebf5">
+      <g transform="translate(944 168)">
+        <rect width="112" height="44" rx="9" fill="#111927" stroke="#34d399" stroke-width="1.5"/>
+        <rect x="10" y="11" width="22" height="22" rx="5" fill="#34d399" opacity="0.18"/>
+        <text x="40" y="27">Vault</text>
+      </g>
+      <g transform="translate(1110 76)">
+        <rect width="120" height="40" rx="9" fill="#111927" stroke="#fbbf24" stroke-opacity="0.6"/>
+        <text x="14" y="25">Email</text>
+      </g>
+      <g transform="translate(1150 196)">
+        <rect width="104" height="40" rx="9" fill="#111927" stroke="#fbbf24" stroke-opacity="0.6"/>
+        <text x="14" y="25">Bank</text>
+      </g>
+      <g transform="translate(1094 288)">
+        <rect width="112" height="40" rx="9" fill="#111927" stroke="#ef4444" stroke-width="1.6"/>
+        <text x="14" y="25">GitHub</text>
+        <circle cx="104" cy="0" r="7" fill="#ef4444"/>
+      </g>
+      <g transform="translate(790 76)">
+        <rect width="104" height="40" rx="9" fill="#111927" stroke="#38bdf8" stroke-opacity="0.6"/>
+        <text x="14" y="25">Phone</text>
+      </g>
+      <g transform="translate(770 282)">
+        <rect width="120" height="40" rx="9" fill="#111927" stroke="#f472b6" stroke-opacity="0.6"/>
+        <text x="14" y="25">Photos</text>
+      </g>
+      <g transform="translate(672 42)">
+        <rect width="80" height="36" rx="9" fill="#111927" stroke="#a3e635" stroke-opacity="0.5"/>
+        <text x="14" y="23">WiFi</text>
+      </g>
+    </g>
+
+    <!-- Logo: the app icon's shield and check, on its tile. -->
+    <g transform="translate(72 96) scale(5.6)">
+      <rect width="24" height="24" rx="5" fill="#0b111c" stroke="#34d399" stroke-opacity="0.35" stroke-width="0.2"/>
+      <path d="M12 2.2 C14 4 16.8 5.1 19.2 5.1 L20 5.9 L20 13 C20 17.6 16.8 20.4 12 22 C7.2 20.4 4 17.6 4 13 L4 5.9 L4.8 5.1 C7.2 5.1 10 4 12 2.2 Z" fill="#34d399"/>
+      <polyline points="8.6,12.4 11,14.8 15.6,10.2" fill="none" stroke="#0b111c" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <g font-family="'Segoe UI', 'DejaVu Sans', Helvetica, Arial, sans-serif">
+      <text x="232" y="160" font-size="58" font-weight="700" fill="#e4ebf5" letter-spacing="-0.5">Security Modeler</text>
+      <text x="234" y="204" font-size="22" fill="#8e9db3">See what breaks when an account or device is lost or hacked.</text>
+      <text x="234" y="236" font-size="22" fill="#8e9db3">A local, private map of your digital life, with a local AI.</text>
+      <rect x="234" y="268" width="168" height="36" rx="18" fill="#34d399" fill-opacity="0.12" stroke="#34d399" stroke-opacity="0.5"/>
+      <text x="318" y="292" font-size="16" font-weight="600" fill="#34d399" text-anchor="middle">made by Akulav</text>
+    </g>
+  </g>
+</svg>

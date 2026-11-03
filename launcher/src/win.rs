@@ -1,7 +1,9 @@
 //! The few Windows calls the launcher needs.
 
 use std::os::windows::io::AsRawHandle;
-use std::process::Child;
+use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
@@ -63,8 +65,28 @@ impl Job {
     }
 }
 
+const NO_WINDOW: u32 = 0x0800_0000;
+
+/// Starts a child without a console window. The job ends it with the launcher.
+pub fn prepare_child(command: &mut Command) {
+    command.creation_flags(NO_WINDOW);
+}
+
+pub fn home() -> PathBuf {
+    if let Some(custom) = std::env::var_os("SECURITY_MODELER_HOME") {
+        return PathBuf::from(custom);
+    }
+    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    local.join("SecurityModeler")
+}
+
+/// Windows always has a desktop for the tray.
+pub fn has_desktop() -> bool {
+    true
+}
+
 /// False if another copy of the launcher is already running for this user.
-pub fn first_instance() -> bool {
+pub fn first_instance(_home: &Path) -> bool {
     let name = wide("Local\\SecurityModeler.Launcher");
     unsafe {
         // Never closed: Windows releases it when this process exits.
@@ -76,7 +98,7 @@ pub fn first_instance() -> bool {
 const QUIT_EVENT: &str = "Local\\SecurityModeler.Quit";
 
 /// Blocks until `SecurityModeler.exe --quit` asks this copy to quit.
-pub fn wait_for_quit_request() {
+pub fn wait_for_quit_request(_home: &Path) {
     let name = wide(QUIT_EVENT);
     unsafe {
         let event = CreateEventW(null(), 0, 0, name.as_ptr());
@@ -87,7 +109,7 @@ pub fn wait_for_quit_request() {
 }
 
 /// Asks the running copy to quit, as its tray menu's Quit does.
-pub fn request_quit() {
+pub fn request_quit(_home: &Path) {
     let name = wide(QUIT_EVENT);
     unsafe {
         let event = CreateEventW(null(), 0, 0, name.as_ptr());

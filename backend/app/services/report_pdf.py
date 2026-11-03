@@ -28,6 +28,7 @@ MUTED = colors.HexColor("#66768c")
 LINE = colors.HexColor("#dde4ec")
 PANEL = colors.HexColor("#f4f7fa")
 ACCENT = colors.HexColor("#0f9d76")
+ACCENT_BRIGHT = colors.HexColor("#34d399")  # The icon's own green.
 COVER = colors.HexColor("#0a111d")
 COVER_TEXT = colors.HexColor("#e4ebf5")
 COVER_MUTED = colors.HexColor("#8e9db3")
@@ -41,17 +42,33 @@ MARGIN = 18 * mm
 WIDTH = PAGE_W - 2 * MARGIN
 
 
+# Regular, bold and light, in order of preference: Windows, then common Linux locations.
+FONT_CANDIDATES = [
+    ("C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/segoeuil.ttf"),
+    *[
+        (f"{folder}/DejaVuSans.ttf", f"{folder}/DejaVuSans-Bold.ttf", f"{folder}/DejaVuSans-ExtraLight.ttf")
+        for folder in ("/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu-sans-fonts",
+                       "/usr/share/fonts/TTF", "/usr/share/fonts/dejavu")
+    ],
+    *[
+        (f"{folder}/LiberationSans-Regular.ttf", f"{folder}/LiberationSans-Bold.ttf", f"{folder}/LiberationSans-Regular.ttf")
+        for folder in ("/usr/share/fonts/truetype/liberation", "/usr/share/fonts/liberation-sans")
+    ],
+]
+
+
 def _fonts() -> tuple[str, str, str]:
-    """Prefers Windows fonts, because the built-in PDF fonts can't show names like "Mălina"."""
-    folder = Path("C:/Windows/Fonts")
-    try:
-        pdfmetrics.registerFont(TTFont("Report", folder / "segoeui.ttf"))
-        pdfmetrics.registerFont(TTFont("Report-Bold", folder / "segoeuib.ttf"))
-        pdfmetrics.registerFont(TTFont("Report-Light", folder / "segoeuil.ttf"))
+    """Prefers a system font, because the built-in PDF fonts can't show names like "Mălina"."""
+    for regular, bold, light in FONT_CANDIDATES:
+        try:
+            pdfmetrics.registerFont(TTFont("Report", regular))
+            pdfmetrics.registerFont(TTFont("Report-Bold", bold))
+            pdfmetrics.registerFont(TTFont("Report-Light", light if Path(light).exists() else regular))
+        except (TTFError, OSError):
+            continue
         pdfmetrics.registerFontFamily("Report", normal="Report", bold="Report-Bold", italic="Report", boldItalic="Report-Bold")
         return "Report", "Report-Bold", "Report-Light"
-    except (TTFError, OSError):
-        return "Helvetica", "Helvetica-Bold", "Helvetica"
+    return "Helvetica", "Helvetica-Bold", "Helvetica"
 
 
 REGULAR, BOLD, LIGHT = _fonts()
@@ -220,12 +237,51 @@ def _when(value) -> str:
     return value.strftime("%d %b %Y") if value else ""
 
 
+def _logo(canvas, x: float, y: float, size: float) -> None:
+    """The app's shield-and-check, drawn as vectors from the same shape as its icon (24-unit box)."""
+    unit = size / 24
+    point = lambda px, py: (x + px * unit, y + (24 - py) * unit)  # noqa: E731  Icon coordinates run downward.
+    canvas.saveState()
+    canvas.setFillColor(colors.HexColor("#0b111c"))
+    canvas.roundRect(x, y, size, size, 5 * unit, stroke=0, fill=1)
+    shield = canvas.beginPath()
+    shield.moveTo(*point(12, 2.2))
+    shield.curveTo(*point(14, 4), *point(16.8, 5.1), *point(19.2, 5.1))
+    shield.lineTo(*point(20, 5.9))
+    shield.lineTo(*point(20, 13))
+    shield.curveTo(*point(20, 17.6), *point(16.8, 20.4), *point(12, 22))
+    shield.curveTo(*point(7.2, 20.4), *point(4, 17.6), *point(4, 13))
+    shield.lineTo(*point(4, 5.9))
+    shield.lineTo(*point(4.8, 5.1))
+    shield.curveTo(*point(7.2, 5.1), *point(10, 4), *point(12, 2.2))
+    shield.close()
+    canvas.setFillColor(ACCENT_BRIGHT)
+    canvas.drawPath(shield, stroke=0, fill=1)
+    check = canvas.beginPath()
+    check.moveTo(*point(8.6, 12.4))
+    check.lineTo(*point(11, 14.8))
+    check.lineTo(*point(15.6, 10.2))
+    canvas.setStrokeColor(colors.HexColor("#0b111c"))
+    canvas.setLineWidth(2.1 * unit)
+    canvas.setLineCap(1)
+    canvas.setLineJoin(1)
+    canvas.drawPath(check, stroke=1, fill=0)
+    canvas.restoreState()
+
+
 def _footer(canvas, doc) -> None:
     canvas.saveState()
+    canvas.setStrokeColor(LINE)
+    canvas.setLineWidth(0.5)
+    canvas.line(MARGIN, 14 * mm, PAGE_W - MARGIN, 14 * mm)
+    _logo(canvas, MARGIN, 8.6 * mm, 3.6 * mm)
+    canvas.setFont(BOLD, 7.5)
+    canvas.setFillColor(INK)
+    canvas.drawString(MARGIN + 5 * mm, 9.6 * mm, "Security Modeler")
     canvas.setFont(REGULAR, 7.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(MARGIN, 10 * mm, "Personal security report. Confidential: this maps how your accounts can be attacked.")
-    canvas.drawRightString(PAGE_W - MARGIN, 10 * mm, f"Page {doc.page}")
+    canvas.drawString(MARGIN + 27 * mm, 9.6 * mm, "made by Akulav  ·  Confidential: this maps how your accounts can be attacked.")
+    canvas.drawRightString(PAGE_W - MARGIN, 9.6 * mm, f"Page {doc.page}")
     canvas.restoreState()
 
 
@@ -234,6 +290,13 @@ def _cover_page(summary: dict, posture: int, generated: datetime):
         canvas.saveState()
         canvas.setFillColor(COVER)
         canvas.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
+        _logo(canvas, MARGIN, PAGE_H - 34 * mm, 12 * mm)
+        canvas.setFillColor(COVER_TEXT)
+        canvas.setFont(BOLD, 13)
+        canvas.drawString(MARGIN + 16 * mm, PAGE_H - 26.5 * mm, "Security Modeler")
+        canvas.setFillColor(COVER_MUTED)
+        canvas.setFont(REGULAR, 9)
+        canvas.drawString(MARGIN + 16 * mm, PAGE_H - 32 * mm, "made by Akulav")
         canvas.setFillColor(ACCENT)
         canvas.rect(MARGIN, PAGE_H - 45 * mm, 14 * mm, 1.2 * mm, stroke=0, fill=1)
         canvas.setFillColor(COVER_TEXT)
@@ -266,6 +329,8 @@ def _cover_page(summary: dict, posture: int, generated: datetime):
             canvas.drawCentredString(x, 46 * mm, label)
         canvas.setFont(REGULAR, 8)
         canvas.drawCentredString(PAGE_W / 2, 20 * mm, "Confidential. Contains a map of your accounts and how they could be attacked. Store it safely.")
+        canvas.setFillColor(ACCENT)
+        canvas.drawCentredString(PAGE_W / 2, 14 * mm, "Security Modeler  ·  made by Akulav  ·  github.com/Akulav/ai-security-modeler")
         canvas.restoreState()
 
     return draw
@@ -406,7 +471,7 @@ def build_report(
         story.append(_table(rows, [45 * mm, 38 * mm, WIDTH - 83 * mm]))
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, title="Personal Security Report", author="Security Modeler",
+    doc = SimpleDocTemplate(buffer, pagesize=A4, title="Personal Security Report", author="Security Modeler", creator="Security Modeler, made by Akulav",
                             leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=18 * mm)
     content = Frame(MARGIN, 18 * mm, WIDTH, PAGE_H - MARGIN - 18 * mm, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
     doc.addPageTemplates([

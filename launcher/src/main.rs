@@ -3,9 +3,11 @@
 
 #![windows_subsystem = "windows"]
 
+#[cfg_attr(windows, path = "win.rs")]
+#[cfg_attr(unix, path = "unix.rs")]
+mod platform;
 mod server;
 mod setup;
-mod win;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -20,6 +22,11 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const REPOSITORY: &str = "https://github.com/Akulav/ai-security-modeler";
+/// The tray icon on Linux, as 64×64 RGBA pixels drawn by assets/make_icon.py. Windows uses the
+/// icon resource that build.rs embeds.
+#[cfg(unix)]
+static ICON_RGBA: &[u8] = include_bytes!("../assets/icon-64.rgba");
 const STATUS_EVERY: Duration = Duration::from_secs(3);
 
 enum UserEvent {
@@ -41,7 +48,7 @@ enum Status {
 struct App {
     home: PathBuf,
     token: String,
-    job: Option<win::Job>,
+    job: Option<platform::Job>,
     url: Mutex<Option<String>>,
     backend: Mutex<Option<Child>>,
     quitting: AtomicBool,
@@ -60,31 +67,30 @@ impl App {
     }
 }
 
-fn home() -> PathBuf {
-    if let Some(custom) = std::env::var_os("SECURITY_MODELER_HOME") {
-        return PathBuf::from(custom);
-    }
-    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    local.join("SecurityModeler")
-}
-
 fn main() {
-    let home = home();
+    let home: PathBuf = platform::home();
     let _ = fs::create_dir_all(home.join("logs"));
     let url_file = home.join("launcher.url");
     let flag = |name: &str| std::env::args().any(|arg| arg == name);
-    // For scripts and shortcuts: quit the running copy, or start without opening the browser.
-    if flag("--quit") {
-        win::request_quit();
+    if flag("--version") {
+        println!("Security Modeler {VERSION}, made by Akulav");
         return;
     }
-    let background = flag("--background");
+    // For scripts and shortcuts: quit the running copy, or start without opening the browser.
+    if flag("--quit") {
+        platform::request_quit(&home);
+        return;
+    }
+    // Without a desktop, such as on a server, there's no tray: it runs in the terminal instead.
+    let headless = flag("--headless") || !platform::has_desktop();
+    let background = flag("--background") || headless;
 
-    if !win::first_instance() {
+    if !platform::first_instance(&home) {
         // Already running: just show it.
         match fs::read_to_string(&url_file) {
-            Ok(url) if !url.trim().is_empty() => win::open(url.trim()),
-            _ => win::message("Security Modeler is still starting. It opens in your browser when it's ready.", false),
+            Ok(url) if headless => println!("Security Modeler is already running at {}", url.trim()),
+            Ok(url) if !url.trim().is_empty() => platform::open(url.trim()),
+            _ => platform::message("Security Modeler is still starting. It opens in your browser when it's ready.", false),
         }
         return;
     }
@@ -96,12 +102,16 @@ fn main() {
     let app = Arc::new(App {
         home: home.clone(),
         token: setup::hex(&secret),
-        job: win::Job::new(),
+        job: platform::Job::new(),
         url: Mutex::new(None),
         backend: Mutex::new(None),
         quitting: AtomicBool::new(false),
     });
     app.log(&format!("Starting version {VERSION}"));
+    if headless {
+        run_headless(app);
+        return;
+    }
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -127,8 +137,10 @@ fn main() {
     let quit = MenuItem::new("Quit", true, None);
     let menu = Menu::new();
     let version = MenuItem::new(format!("Security Modeler {VERSION}"), false, None);
+    let author = MenuItem::new("Made by Akulav", true, None);
     let _ = menu.append_items(&[
         &version,
+        &author,
         &status,
         &PredefinedMenuItem::separator(),
         &open,
@@ -144,7 +156,7 @@ fn main() {
     {
         let (app, proxy) = (app.clone(), proxy.clone());
         std::thread::spawn(move || {
-            win::wait_for_quit_request();
+            platform::wait_for_quit_request(&app.home);
             begin_quit(app, proxy);
         });
     }
@@ -156,7 +168,7 @@ fn main() {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::NewEvents(StartCause::Init) => {
-                let icon = Icon::from_resource(1, Some((32, 32))).ok();
+                let icon = tray_icon();
                 let mut builder = TrayIconBuilder::new()
                     .with_tooltip("Security Modeler: starting")
                     .with_menu(Box::new(menu.take().unwrap()))
@@ -168,7 +180,7 @@ fn main() {
                 tray = builder.build().ok();
                 if first_run {
                     std::thread::spawn(|| {
-                        win::message(
+                        platform::message(
                             "Setting up Security Modeler for its first start. This downloads Python and a few \
                              packages, which takes a minute or two.\n\nIt opens in your browser when it's ready. \
                              Its icon is in the system tray: right-click it to quit.",
@@ -185,13 +197,13 @@ fn main() {
             }))
             | Event::UserEvent(UserEvent::Tray(TrayIconEvent::DoubleClick { button: MouseButton::Left, .. })) => {
                 if let Some(url) = app.url() {
-                    win::open(&url);
+                    platform::open(&url);
                 }
             }
             Event::UserEvent(UserEvent::Menu(event)) => {
                 if event.id == open.id() {
                     if let Some(url) = app.url() {
-                        win::open(&url);
+                        platform::open(&url);
                     }
                 } else if event.id == unload.id() {
                     if let Some(url) = app.url() {
@@ -201,9 +213,11 @@ fn main() {
                     retry.set_enabled(false);
                     spawn_worker(app.clone(), proxy.clone());
                 } else if event.id == folder.id() {
-                    win::open(&app.home.to_string_lossy());
+                    platform::open(&app.home.to_string_lossy());
                 } else if event.id == logs.id() {
-                    win::open(&app.home.join("logs").to_string_lossy());
+                    platform::open(&app.home.join("logs").to_string_lossy());
+                } else if event.id == author.id() {
+                    platform::open(REPOSITORY);
                 } else if event.id == quit.id() {
                     begin_quit(app.clone(), proxy.clone());
                 }
@@ -228,7 +242,7 @@ fn main() {
                 if running && !opened_once {
                     opened_once = true;
                     if let Some(url) = app.url() {
-                        win::open(&url);
+                        platform::open(&url);
                     }
                 }
             }
@@ -254,7 +268,7 @@ fn spawn_worker(app: Arc<App>, proxy: EventLoopProxy<UserEvent>) {
             }
             app.log(&format!("Failed: {reason}"));
             send(Status::Failed(reason.clone()));
-            win::message(
+            platform::message(
                 &format!("Security Modeler couldn't start.\n\n{reason}\n\nThe logs are in {}", app.home.join("logs").display()),
                 true,
             );
@@ -305,26 +319,78 @@ fn run(app: &App, report: &dyn Fn(&str)) -> Result<(), String> {
     Ok(())
 }
 
-/// Stops Ollama through the backend, then ends every process the app started, which frees all
-/// the RAM and VRAM they held.
+#[cfg(windows)]
+fn tray_icon() -> Option<Icon> {
+    Icon::from_resource(1, Some((32, 32))).ok()
+}
+
+#[cfg(unix)]
+fn tray_icon() -> Option<Icon> {
+    Icon::from_rgba(ICON_RGBA.to_vec(), 64, 64).ok()
+}
+
 fn begin_quit(app: Arc<App>, proxy: EventLoopProxy<UserEvent>) {
     if app.quitting.swap(true, Ordering::SeqCst) {
         return;
     }
     let _ = proxy.send_event(UserEvent::Status(Status::Quitting));
     std::thread::spawn(move || {
-        app.log("Quitting");
-        if let Some(url) = app.url() {
-            server::request_quit(&url, &app.token);
-        }
-        if let Some(job) = &app.job {
-            job.terminate();
-        }
-        if let Some(mut child) = app.backend.lock().unwrap().take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        let _ = fs::remove_file(app.home.join("launcher.url"));
+        shutdown(&app);
         let _ = proxy.send_event(UserEvent::Exit);
     });
+}
+
+/// Stops Ollama through the backend, then ends every process the app started, which frees all
+/// the RAM and VRAM they held.
+fn shutdown(app: &App) {
+    app.log("Quitting");
+    if let Some(url) = app.url() {
+        server::request_quit(&url, &app.token);
+    }
+    if let Some(job) = &app.job {
+        job.terminate();
+    }
+    if let Some(mut child) = app.backend.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let _ = fs::remove_file(app.home.join("launcher.url"));
+}
+
+/// Without a desktop: runs in the terminal until Ctrl+C or `SecurityModeler --quit`.
+fn run_headless(app: Arc<App>) {
+    println!("Security Modeler {VERSION}, made by Akulav");
+    println!("Data folder: {}", app.home.display());
+    if let Err(reason) = run(&app, &|step| println!("{step}…")) {
+        app.log(&format!("Failed: {reason}"));
+        eprintln!("Security Modeler couldn't start.\n\n{reason}\n\nThe logs are in {}", app.home.join("logs").display());
+        shutdown(&app);
+        std::process::exit(1);
+    }
+    println!("Running at {}. Open it in a browser. Press Ctrl+C to quit.", app.url().unwrap_or_default());
+
+    let (sender, quit_requested) = std::sync::mpsc::channel();
+    {
+        let home = app.home.clone();
+        std::thread::spawn(move || {
+            platform::wait_for_quit_request(&home);
+            let _ = sender.send(());
+        });
+    }
+    let mut code = 0;
+    loop {
+        if quit_requested.recv_timeout(Duration::from_secs(1)).is_ok() {
+            break;
+        }
+        let exited = app.backend.lock().unwrap().as_mut().is_none_or(|child| !matches!(child.try_wait(), Ok(None)));
+        if exited {
+            app.log("The backend stopped unexpectedly");
+            eprintln!("The app stopped unexpectedly. The logs are in {}", app.home.join("logs").display());
+            code = 1;
+            break;
+        }
+    }
+    println!("Quitting…");
+    shutdown(&app);
+    std::process::exit(code);
 }

@@ -54,13 +54,32 @@ def in_tile(x, y, radius=5.0) -> bool:
 
 
 def render(size: int) -> bytes:
+    return png(size, pixels(size, filter_bytes=True))
+
+
+def svg() -> str:
+    """The same drawing as a vector, for the web page and the README."""
+    points = " ".join(f"{x:.2f},{y:.2f}" for x, y in shield())
+    accent, tile = "#%02x%02x%02x" % ACCENT, "#%02x%02x%02x" % TILE
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+        f'<rect width="24" height="24" rx="5" fill="{tile}"/>'
+        f'<polygon points="{points}" fill="{accent}"/>'
+        f'<polyline points="8.6,12.4 11,14.8 15.6,10.2" fill="none" stroke="{tile}" stroke-width="2.1" '
+        'stroke-linecap="round" stroke-linejoin="round"/></svg>\n'
+    )
+
+
+def pixels(size: int, filter_bytes: bool = False) -> bytes:
+    """RGBA rows, each led by a PNG filter byte when `filter_bytes` is set."""
     outline = shield()
     # Small sizes get a bolder check, or it disappears.
     check_width = 2.6 if size <= 24 else 2.1
     check = [((8.6, 12.4), (11, 14.8)), ((11, 14.8), (15.6, 10.2))]
     rows = bytearray()
     for py in range(size):
-        rows.append(0)  # PNG filter: none.
+        if filter_bytes:
+            rows.append(0)  # PNG filter: none.
         for px in range(size):
             totals = [0, 0, 0, 0]
             for sy in range(SAMPLES):
@@ -81,7 +100,7 @@ def render(size: int) -> bytes:
                 [totals[0] // covered, totals[1] // covered, totals[2] // covered, 255 * covered // n]
                 if covered else [0, 0, 0, 0]
             )
-    return png(size, bytes(rows))
+    return bytes(rows)
 
 
 def png(size: int, raw: bytes) -> bytes:
@@ -107,4 +126,10 @@ if __name__ == "__main__":
     images = [(size, render(size)) for size in SIZES]
     (here / "icon.ico").write_bytes(ico(images))
     (here / "icon.png").write_bytes(dict(images)[256])
+    (here / "icon-64.rgba").write_bytes(pixels(64))
+    # The same drawing for the web page's tab and logo, and for the README.
+    for target in (here / "icon.svg", here.parents[1] / "frontend" / "public" / "icon.svg",
+                   here.parents[1] / "docs" / "assets" / "logo.svg"):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(svg())
     print("Wrote", here / "icon.ico")

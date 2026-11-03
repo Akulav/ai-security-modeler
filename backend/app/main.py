@@ -51,4 +51,8 @@ if FRONTEND_DIST.is_dir():
     def frontend(path: str) -> FileResponse:
         if path.startswith("api/"):
             raise HTTPException(404)
+        # Top-level files from the build, such as the icon. Anything else is a page of the app.
+        wanted = (FRONTEND_DIST / path).resolve()
+        if path and wanted.parent == FRONTEND_DIST.resolve() and wanted.is_file():
+            return FileResponse(wanted)
         return FileResponse(FRONTEND_DIST / "index.html")

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Security Modeler
+GenericName=Personal security map
+Comment=Map your accounts and devices, and see what breaks when one is lost or hacked. Made by Akulav.
+Exec=SecurityModeler
+Icon=security-modeler
+Terminal=false
+Categories=Utility;Security;
+Keywords=security;2FA;password;accounts;blast radius;
+StartupNotify=false

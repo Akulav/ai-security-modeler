@@ -1,10 +1,10 @@
 //! First-run setup, repeated only for what changed: unpacks the app, then gets uv, Python and the
 //! backend's packages. Everything goes in the app's home folder, so nothing is installed system-wide.
 
+use crate::platform;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Cursor};
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -13,9 +13,19 @@ static PAYLOAD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/payload.zip"))
 const PAYLOAD_HASH: &str = env!("PAYLOAD_HASH");
 
 const UV_VERSION: &str = "0.9.7";
+#[cfg(windows)]
+const UV_TRIPLE: &str = "x86_64-pc-windows-msvc";
+#[cfg(all(unix, target_arch = "x86_64"))]
+const UV_TRIPLE: &str = "x86_64-unknown-linux-gnu";
+#[cfg(all(unix, target_arch = "aarch64"))]
+const UV_TRIPLE: &str = "aarch64-unknown-linux-gnu";
+#[cfg(windows)]
 const UV_ASSET: &str = "uv-x86_64-pc-windows-msvc.zip";
+#[cfg(all(unix, target_arch = "x86_64"))]
+const UV_ASSET: &str = "uv-x86_64-unknown-linux-gnu.tar.gz";
+#[cfg(all(unix, target_arch = "aarch64"))]
+const UV_ASSET: &str = "uv-aarch64-unknown-linux-gnu.tar.gz";
 const PYTHON_VERSION: &str = "3.13";
-pub const NO_WINDOW: u32 = 0x0800_0000;
 
 pub struct Runtime {
     pub python: PathBuf,
@@ -56,7 +66,8 @@ fn unpack_app(home: &Path) -> io::Result<PathBuf> {
 
 fn get_uv(home: &Path, report: &dyn Fn(&str)) -> Result<PathBuf, String> {
     let folder = home.join("tools").join("uv");
-    let exe = folder.join("uv.exe");
+    // The Windows zip has uv at its top; the Linux archive has it in a folder named for the platform.
+    let exe = if cfg!(windows) { folder.join("uv.exe") } else { folder.join(format!("uv-{UV_TRIPLE}")).join("uv") };
     let marker = folder.join("VERSION");
     if exe.exists() && fs::read_to_string(&marker).is_ok_and(|version| version == UV_VERSION) {
         return Ok(exe);
@@ -74,11 +85,22 @@ fn get_uv(home: &Path, report: &dyn Fn(&str)) -> Result<PathBuf, String> {
         return Err("The uv download failed its checksum. Try again.".into());
     }
     let _ = fs::remove_dir_all(&folder);
-    zip::ZipArchive::new(Cursor::new(archive))
-        .and_then(|mut zip| zip.extract(&folder))
-        .map_err(|error| format!("Couldn't unpack uv: {error}"))?;
+    unpack_uv(archive, &folder).map_err(|error| format!("Couldn't unpack uv: {error}"))?;
     fs::write(&marker, UV_VERSION).map_err(|error| error.to_string())?;
     Ok(exe)
+}
+
+#[cfg(windows)]
+fn unpack_uv(archive: Vec<u8>, folder: &Path) -> io::Result<()> {
+    zip::ZipArchive::new(Cursor::new(archive))?.extract(folder).map_err(io::Error::other)
+}
+
+#[cfg(unix)]
+fn unpack_uv(archive: Vec<u8>, folder: &Path) -> io::Result<()> {
+    let mut bundle = tar::Archive::new(flate2::read::GzDecoder::new(Cursor::new(archive)));
+    // Keeps uv executable. Entries can't land outside the folder: `unpack` refuses those paths.
+    bundle.set_preserve_permissions(true);
+    bundle.unpack(folder)
 }
 
 /// A Python of the app's own, managed by uv inside the home folder.
@@ -122,14 +144,15 @@ fn get_packages(home: &Path, uv: &Path, python: &Path, app: &Path, report: &dyn 
 }
 
 fn uv_command(home: &Path, uv: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(uv)
+    let mut command = Command::new(uv);
+    platform::prepare_child(&mut command);
+    let output = command
         .args(args)
         // Kept inside the home folder, and unaffected by any uv the user has configured.
         .env("UV_PYTHON_INSTALL_DIR", home.join("python"))
         .env("UV_CACHE_DIR", home.join("cache").join("uv"))
         .env("UV_NO_CONFIG", "1")
         .env_remove("VIRTUAL_ENV")
-        .creation_flags(NO_WINDOW)
         .output()
         .map_err(|error| format!("Couldn't run uv: {error}"))?;
     if output.status.success() {

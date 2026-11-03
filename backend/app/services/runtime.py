@@ -9,11 +9,14 @@ import ctypes
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -28,9 +31,34 @@ HOME_DIR = LLM_DIR / "home"
 DOWNLOADS_DIR = LLM_DIR / "downloads"
 LOG_FILE = LLM_DIR / "ollama.log"
 PID_FILE = LLM_DIR / "ollama.pid"
-EXECUTABLE = BIN_DIR / "ollama.exe"
-# The ROCm add-on is small and enables AMD GPUs; Ollama ignores it on other hardware.
-ASSETS = ["ollama-windows-amd64.zip", "ollama-windows-amd64-rocm.zip"]
+IS_WINDOWS = sys.platform == "win32"
+# The Windows zip has the program at its top; the Linux archive has it under bin/.
+EXECUTABLE = BIN_DIR / "ollama.exe" if IS_WINDOWS else BIN_DIR / "bin" / "ollama"
+LINUX_ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+
+
+def _has_amd_gpu() -> bool:
+    return any(
+        path.read_text().strip() == "0x1002"  # AMD's PCI vendor id.
+        for path in Path("/sys/class/drm").glob("card*/device/vendor")
+        if path.is_file()
+    )
+
+
+def _assets() -> list[str]:
+    if IS_WINDOWS:
+        # The ROCm add-on is small and enables AMD GPUs; Ollama ignores it on other hardware.
+        return ["ollama-windows-amd64.zip", "ollama-windows-amd64-rocm.zip"]
+    architecture = LINUX_ARCHITECTURES.get(platform.machine().lower())
+    if sys.platform != "linux" or architecture is None:
+        return []
+    # On Linux the ROCm add-on is about 1 GB, so it's only fetched where it can be used.
+    return [f"ollama-linux-{architecture}.tar.zst"] + (
+        [f"ollama-linux-{architecture}-rocm.tar.zst"] if architecture == "amd64" and _has_amd_gpu() else []
+    )
+
+
+ASSETS = _assets()
 MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9][\w.\-/]*(:[\w.\-]+)?$")
 STARTUP_SECONDS = 30
 CHUNK_BYTES = 1024 * 1024
@@ -73,8 +101,39 @@ def _free_port() -> int:
 
 
 def _kill_tree(pid: int) -> None:
-    # /T also ends the model runner processes Ollama spawned.
-    subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, check=False)
+    """Ends the runtime and the model runner processes it spawned."""
+    if IS_WINDOWS:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, check=False)
+        return
+    # On Linux it's started as the leader of its own process group, so the group is the tree.
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _end_with_parent() -> None:
+    """Runs in the Linux child before it starts: the kernel stops it if this app dies, as the
+    Windows job does. Best effort, since it needs glibc."""
+    try:
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM)  # 1 is PR_SET_PDEATHSIG.
+    except OSError:
+        pass
+
+
+def _process_path(pid: int) -> str:
+    """The program a running process was started from, or an empty string."""
+    if not IS_WINDOWS:
+        try:
+            return os.readlink(f"/proc/{pid}/exe")
+        except OSError:
+            return ""
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", f"(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path"],
+        capture_output=True, text=True, check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return result.stdout.strip()
 
 
 class _BasicLimits(ctypes.Structure):
@@ -154,12 +213,8 @@ def _stop_leftover() -> None:
         pid = int(PID_FILE.read_text())
     except (OSError, ValueError):
         return
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", f"(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path"],
-        capture_output=True, text=True, check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    if result.stdout.strip().lower() == str(EXECUTABLE).lower():
+    running = _process_path(pid)
+    if running and os.path.normcase(running) == os.path.normcase(str(EXECUTABLE)):
         _kill_tree(pid)
     PID_FILE.unlink(missing_ok=True)
 
@@ -169,8 +224,16 @@ def _extract(archives: list[Path], destination: Path) -> None:
     temporary = destination.with_name(destination.name + ".tmp")
     shutil.rmtree(temporary, ignore_errors=True)
     for archive in archives:
-        with zipfile.ZipFile(archive) as bundle:
-            bundle.extractall(temporary)
+        if archive.name.endswith(".tar.zst"):
+            import zstandard  # Installed on Linux only, the one platform whose archives use it.
+
+            with archive.open("rb") as raw, zstandard.ZstdDecompressor().stream_reader(raw) as stream:
+                with tarfile.open(fileobj=stream, mode="r|") as bundle:
+                    # "data" refuses paths outside the folder, links out of it and special files.
+                    bundle.extractall(temporary, filter="data")
+        else:
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(temporary)
     shutil.rmtree(destination, ignore_errors=True)
     temporary.rename(destination)
 
@@ -318,8 +381,11 @@ class RuntimeManager:
         version_file = BIN_DIR / "VERSION"
         if EXECUTABLE.exists() and version_file.exists() and version_file.read_text().strip() == settings.ollama_version:
             return
-        if sys.platform != "win32":
-            raise RuntimeError_("Automatic setup supports Windows. Set LLM_AUTO_SETUP=false and run Ollama yourself.")
+        if not ASSETS:
+            raise RuntimeError_(
+                f"Automatic setup supports Windows and Linux on x86-64 or ARM64, not {sys.platform} on "
+                f"{platform.machine()}. Set LLM_AUTO_SETUP=false and run Ollama yourself."
+            )
 
         base = f"https://github.com/ollama/ollama/releases/download/{settings.ollama_version}"
         DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -383,9 +449,12 @@ class RuntimeManager:
         }
         _close_children_with_app()
         log = LOG_FILE.open("ab")
+        platform_options = (
+            {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)} if IS_WINDOWS
+            else {"start_new_session": True, "preexec_fn": _end_with_parent}
+        )
         self._process = subprocess.Popen(
-            [str(EXECUTABLE), "serve"], env=env, cwd=BIN_DIR, stdout=log, stderr=log,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            [str(EXECUTABLE), "serve"], env=env, cwd=BIN_DIR, stdout=log, stderr=log, **platform_options,
         )
         log.close()
         _keep_in_job(self._process.pid)

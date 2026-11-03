@@ -6,3 +6,5 @@ pydantic-settings>=2.6,<3
 httpx>=0.27,<1
 ddgs>=9,<10
 reportlab>=4,<6
+# Unpacks the Linux build of Ollama, which ships as .tar.zst.
+zstandard>=0.23,<1; sys_platform == "linux"

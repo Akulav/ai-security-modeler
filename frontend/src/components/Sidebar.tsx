@@ -1,4 +1,4 @@
-import { Plus, ShieldCheck } from "lucide-react";
+import { Plus } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import type { Catalog } from "../types";
 import { CATEGORY_COLORS, FALLBACK_ICON, NODE_ICONS } from "../visuals";
@@ -22,11 +22,15 @@ export default function Sidebar({ catalog, onCreate }: Props) {
   return (
     <aside className="sidebar glass">
       <div className="brand">
-        <ShieldCheck size={22} />
+        <img src="/icon.svg" alt="" width={34} height={34} />
         <div>
           <strong>Security Modeler</strong>
           <span>personal infrastructure map</span>
-          <span className="credit">made by Akulav · {__APP_VERSION__ === "dev" ? "dev" : `v${__APP_VERSION__}`}</span>
+          <span className="credit">
+            made by{" "}
+            <a href="https://github.com/Akulav/ai-security-modeler" target="_blank" rel="noopener noreferrer">Akulav</a>
+            {" · "}{__APP_VERSION__ === "dev" ? "dev" : `v${__APP_VERSION__}`}
+          </span>
         </div>
       </div>
 

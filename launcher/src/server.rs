@@ -1,9 +1,9 @@
 //! Runs the backend and talks to it.
 
-use crate::setup::{NO_WINDOW, Runtime};
+use crate::platform;
+use crate::setup::Runtime;
 use std::fs;
 use std::net::TcpListener;
-use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -33,7 +33,9 @@ pub fn start(home: &Path, runtime: &Runtime, port: u16, token: &str) -> Result<C
     let _ = fs::rename(&log, logs.join("backend.previous.log"));
     let output = fs::File::create(&log).map_err(|error| error.to_string())?;
     let errors = output.try_clone().map_err(|error| error.to_string())?;
-    Command::new(&runtime.python)
+    let mut command = Command::new(&runtime.python);
+    platform::prepare_child(&mut command);
+    command
         // -s leaves out packages from the user's own Python.
         .args(["-s", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", &port.to_string()])
         .current_dir(runtime.app.join("backend"))
@@ -45,7 +47,6 @@ pub fn start(home: &Path, runtime: &Runtime, port: u16, token: &str) -> Result<C
         .stdin(Stdio::null())
         .stdout(output)
         .stderr(errors)
-        .creation_flags(NO_WINDOW)
         .spawn()
         .map_err(|error| format!("Couldn't start the app: {error}"))
 }

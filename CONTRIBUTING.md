@@ -1,6 +1,6 @@
 # Contributing
 
-This project is [view only](LICENSE), so running or changing it requires written permission from the copyright holder. Please ask before starting work. By submitting a contribution, you accept the contribution terms in the license.
+Security Modeler is made by Akulav and is [source-available](LICENSE). You may fork it on GitHub to send changes back as pull requests. Please open an issue to discuss larger changes before starting work.
 
 ## Setup
 
@@ -38,11 +38,31 @@ $env:SECURITY_MODELER_HOME = "$env:TEMP\sm-test"; .\launcher\target\release\Secu
 
 On start it unpacks the app into the data folder's `app` folder, and gets uv, Python and the packages only when they're missing or changed. It runs the backend with `SECURITY_MODELER_HOME` set, so the backend keeps its data there too. The launcher puts the backend in a Windows job object, so Quit, a crash or Task Manager ending the launcher all end the backend, Ollama and its model runners. Logs are in the data folder's `logs`.
 
-The icon is drawn by `launcher/assets/make_icon.py`. Run it again after changing it.
+The icon is drawn by `launcher/assets/make_icon.py`. Run it again after changing it: it also writes the web page's icon, the README logo and the raw pixels the Linux tray uses.
+
+### On Linux
+
+The same launcher builds on Linux, where it uses the tray through GTK and AppIndicator. Install the build libraries first, for example on Debian or Ubuntu:
+
+```bash
+sudo apt-get install libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+```
+
+```bash
+cd frontend && npm ci && npm run build && cd ../launcher && cargo build --release
+```
+
+Try it against a test folder, without a tray:
+
+```bash
+SECURITY_MODELER_HOME=/tmp/sm-test ./launcher/target/release/SecurityModeler --headless
+```
+
+Instead of a job object, each child leads its own process group and is stopped by the kernel if its parent dies, so Quit, a crash or `kill` all end the backend, Ollama and its model runners. `win.rs` and `unix.rs` hold the only platform-specific code.
 
 ## Releases
 
-`.github/workflows/release.yml` runs on every push to `main`. It tests the backend, builds the frontend and the exe, then publishes a GitHub release tagged with the next version. Versions come from tags, so there's nothing to edit or commit by hand. The commit messages since the last release decide the next one:
+`.github/workflows/release.yml` runs on every push to `main`. It tests the backend on Windows and Linux, builds the Windows exe and the Linux package, starts the Linux build headless to check it serves the app and quits cleanly, then publishes one GitHub release with both, tagged with the next version. Versions come from tags, so there's nothing to edit or commit by hand. The commit messages since the last release decide the next one:
 
 | Commits include | Version change |
 |---|---|
@@ -50,7 +70,7 @@ The icon is drawn by `launcher/assets/make_icon.py`. Run it again after changing
 | A message starting with `feat:` | Minor |
 | Anything else | Patch |
 
-To choose the change yourself, run the workflow from the Actions tab and pick one. Add `[skip release]` to a commit message to build without releasing. Pull requests are tested and built, and their exe is attached to the run, but they aren't released.
+To choose the change yourself, run the workflow from the Actions tab and pick one. Add `[skip release]` to a commit message to build without releasing. Pull requests are tested and built, and their builds are attached to the run, but they aren't released.
 
 ## Checks
 

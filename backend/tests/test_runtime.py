@@ -149,9 +149,71 @@ def test_leftover_check_spares_a_process_that_is_not_ours(monkeypatch, tmp_path)
     runtime.PID_FILE.write_text("1234")
     killed = []
     monkeypatch.setattr(runtime, "_kill_tree", killed.append)
-    monkeypatch.setattr(runtime.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": "C:\\other\\ollama.exe\n"})())
+    monkeypatch.setattr(runtime, "_process_path", lambda pid: "C:\\other\\ollama.exe")
     runtime._stop_leftover()
     assert killed == [] and not runtime.PID_FILE.exists()
+
+
+def test_leftover_check_stops_our_own_runtime(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "PID_FILE", tmp_path / "ollama.pid")
+    monkeypatch.setattr(runtime, "EXECUTABLE", tmp_path / "bin" / "ollama")
+    runtime.PID_FILE.write_text("1234")
+    killed = []
+    monkeypatch.setattr(runtime, "_kill_tree", killed.append)
+    monkeypatch.setattr(runtime, "_process_path", lambda pid: str(tmp_path / "bin" / "ollama"))
+    runtime._stop_leftover()
+    assert killed == [1234]
+
+
+@pytest.mark.parametrize("machine,amd,expected", [
+    ("x86_64", False, ["ollama-linux-amd64.tar.zst"]),
+    ("x86_64", True, ["ollama-linux-amd64.tar.zst", "ollama-linux-amd64-rocm.tar.zst"]),
+    ("aarch64", True, ["ollama-linux-arm64.tar.zst"]),
+    ("riscv64", False, []),
+])
+def test_linux_downloads_match_the_machine(monkeypatch, machine, amd, expected):
+    monkeypatch.setattr(runtime, "IS_WINDOWS", False)
+    monkeypatch.setattr(runtime.sys, "platform", "linux")
+    monkeypatch.setattr(runtime.platform, "machine", lambda: machine)
+    monkeypatch.setattr(runtime, "_has_amd_gpu", lambda: amd)
+    assert runtime._assets() == expected
+
+
+def test_unsupported_platform_explains_how_to_continue(monkeypatch):
+    monkeypatch.setattr(runtime, "ASSETS", [])
+    monkeypatch.setattr(runtime, "EXECUTABLE", runtime.Path("missing"))
+    with pytest.raises(runtime.RuntimeError_, match="LLM_AUTO_SETUP=false"):
+        asyncio.run(RuntimeManager()._install())
+
+
+def _tar_zst(path, members: dict[str, bytes], mode=0o755) -> None:
+    import io
+    import tarfile
+    import zstandard
+
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as bundle:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), mode
+            bundle.addfile(info, io.BytesIO(data))
+    path.write_bytes(zstandard.ZstdCompressor().compress(raw.getvalue()))
+
+
+def test_linux_archive_unpacks_with_its_layout(tmp_path):
+    archive = tmp_path / "ollama-linux-amd64.tar.zst"
+    _tar_zst(archive, {"bin/ollama": b"binary", "lib/ollama/libggml.so": b"lib"})
+    runtime._extract([archive], tmp_path / "ollama")
+    assert (tmp_path / "ollama" / "bin" / "ollama").read_bytes() == b"binary"
+    assert (tmp_path / "ollama" / "lib" / "ollama" / "libggml.so").exists()
+
+
+def test_linux_archive_cannot_write_outside_its_folder(tmp_path):
+    archive = tmp_path / "evil.tar.zst"
+    _tar_zst(archive, {"../escaped": b"x"})
+    with pytest.raises(Exception):
+        runtime._extract([archive], tmp_path / "ollama")
+    assert not (tmp_path / "escaped").exists()
 
 
 def _fake_ollama(installed=("m:latest",), generate_status=200):
