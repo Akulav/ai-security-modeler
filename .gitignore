@@ -1,0 +1,47 @@
+# Secrets and settings. Commit .env.example instead.
+.env
+.env.*
+!.env.example
+
+# Your map, and anything exported from it. These describe how your accounts could be attacked.
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.bak
+security-model*.json
+security-report*.pdf
+*.csv
+
+# Portable LLM runtime and models, downloaded on first start (many GB)
+llm/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Logs
+*.log
+
+# Editors and operating systems
+.vscode/
+.idea/
+.claude/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

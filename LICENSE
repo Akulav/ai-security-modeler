@@ -1,0 +1,37 @@
+View-Only License
+
+Copyright (c) 2026 Akulav. All rights reserved.
+
+This repository's source code, documentation and other materials (the "Software") are
+published for viewing only.
+
+1. Permission. You may view and read the Software on the platform where it is published,
+   and make the temporary copies your device needs to display it. If it is published on
+   GitHub, you also have any rights GitHub's Terms of Service require for viewing and
+   forking within GitHub. Those rights give you no permission beyond what they require.
+
+2. Restrictions. Unless the copyright holder has given you prior written permission, you
+   may not:
+   a. run, install, compile or deploy the Software;
+   b. copy, modify, adapt or create derivative works of the Software;
+   c. distribute, publish, sublicense, sell or otherwise make the Software available;
+   d. use the Software, in whole or in part, in any other product or service, or to
+      train any machine learning model.
+
+3. Third-party components. Dependencies and models the Software refers to are not covered
+   by this license and remain under their own terms.
+
+4. Contributions. By submitting a contribution, you confirm that you have the right to do
+   so, and you grant the copyright holder a perpetual, worldwide, irrevocable, royalty-free
+   license to use, modify, distribute and relicense it.
+
+5. Termination. Any permission under this license ends automatically if you breach it.
+
+6. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
+   AND NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE. The Software's security
+   findings and AI output are not professional security advice.
+
+To request permission for anything not allowed here, contact the copyright holder through
+the repository.
