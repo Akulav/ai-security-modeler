@@ -113,4 +113,4 @@ Quit the app from its tray icon, then delete `SecurityModeler.exe` and the data 
 
 ## License
 
-View only. All rights reserved. You may read this code, but you may not run, copy, modify or distribute it without written permission. See [LICENSE](LICENSE) for the full terms. Dependencies and models keep their own licenses.
+**Source-available, not open source.** You may run the releases, read the code and modify it privately (and share your changes privately with friends or family), but you may not distribute modifications, redistribute it in any form or make money from it. See [LICENSE](LICENSE). Dependencies and models keep their own licenses.
