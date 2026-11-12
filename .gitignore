@@ -53,3 +53,5 @@ Desktop.ini
 update.json
 update.request
 update.apply
+# graphify knowledge graph (local, rebuilt with `graphify update .`)
+graphify-out/
