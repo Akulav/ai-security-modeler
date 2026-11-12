@@ -1,268 +1,202 @@
-name: Build and release
+name: Release
 
-# Every push to main that changes the app is tested, built for Windows and Linux, and released with
-# the next version. Versions come from git tags (vX.Y.Z), so nothing is committed back. Pull
-# requests are tested and built, and their builds are attached to the run, but not released.
+# Publishes a release by itself, the same way in all of Akulav's apps: a push to main that changes VERSION
+# (python tools_dev/bump_version.py 0.3.0, fill in CHANGELOG.md, commit, push) runs the tests, builds the program for
+# Windows, Linux and macOS (Apple Silicon) with the app inside, creates the tag v<VERSION> and publishes exactly three
+# files, one per system, each both the install and the update:
+#
+#   SecurityModeler-Setup.exe     Windows x64 (Inno Setup: launcher/installer/security-modeler.iss)
+#   SecurityModeler-linux-x64     Linux x64 (installs itself on its first start)
+#   SecurityModeler-macos-arm64   macOS Apple Silicon (installs itself on its first start)
+#
+# Installed copies find the release by themselves and check the download against GitHub's SHA-256 digest of it
+# (launcher/src/update.rs). A version that already has its tag is skipped, so nothing is published twice;
+# "Run workflow" on the Actions page does the same for the current VERSION (e.g. after a failed run).
+
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md", "docs/**", "LICENSE"]
-  pull_request:
+    paths: [VERSION, .github/workflows/release.yml]
   workflow_dispatch:
-    inputs:
-      bump:
-        description: Which part of the version to raise. Auto reads the commit messages.
-        type: choice
-        options: [auto, patch, minor, major]
-        default: auto
 
 permissions:
   contents: write
 
-# One release at a time, so two quick pushes can't claim the same version.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  version:
+  check:
+    name: New version?
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Work out the version
-        id: version
-        env:
-          BUMP: ${{ inputs.bump || 'auto' }}
-          PR: ${{ github.event.number }}
+      - id: v
         run: |
-          set -euo pipefail
-          last=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
-          if [ -z "$last" ]; then base=0.0.0; range=HEAD; else base=${last#v}; range="$last..HEAD"; fi
-          IFS=. read -r major minor patch <<< "$base"
-          log=$(git log --format='%s%n%b' "$range")
-
-          # Conventional commits: a breaking change raises major, feat: raises minor, anything else patch.
-          bump=$BUMP
-          if [ "$bump" = auto ]; then
-            if grep -qE '^BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:' <<< "$log"; then bump=major
-            elif grep -qE '^feat(\([^)]*\))?:' <<< "$log"; then bump=minor
-            else bump=patch; fi
+          v="$(tr -d ' \r\n' < VERSION)"
+          c="$(sed -n 's/^version = "\(.*\)"/\1/p' launcher/Cargo.toml | head -n1)"
+          echo "VERSION=$v Cargo.toml=$c"
+          test "$v" = "$c" || { echo "::error::VERSION $v and launcher/Cargo.toml $c differ"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null; then
+            echo "::notice::v$v is already released: nothing to publish (bump VERSION for a new release)"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
-          case $bump in
-            major) major=$((major + 1)); minor=0; patch=0 ;;
-            minor) minor=$((minor + 1)); patch=0 ;;
-            *) patch=$((patch + 1)) ;;
-          esac
-          version="$major.$minor.$patch"
-          # The first release starts at 0.1.0.
-          if [ -z "$last" ] && [ "$bump" != major ]; then version=0.1.0; fi
+          echo "### Security Modeler $v (publish: $(grep publish "$GITHUB_OUTPUT" | cut -d= -f2))" >> "$GITHUB_STEP_SUMMARY"
 
-          release=true
-          if [ -n "$last" ] && [ "$(git rev-list --count "$range")" = 0 ]; then release=false; fi
-          if [ -n "$PR" ]; then version="$version-pr.$PR"; release=false; fi
-
-          echo "Previous: ${last:-none}, next: $version ($bump), release: $release"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "release=$release" >> "$GITHUB_OUTPUT"
-
-  test:
+  tests:
+    name: Backend tests (${{ matrix.os }})
+    needs: check
+    if: needs.check.outputs.publish == 'true'
     strategy:
-      fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
-
-      - name: Test the backend
-        working-directory: backend
+      - working-directory: backend
         run: |
           python -m pip install -r requirements-dev.txt
           python -m pytest -q
 
-  windows:
-    needs: version
-    runs-on: windows-latest
+  build:
+    name: Build (${{ matrix.name }})
+    needs: [check, tests]
+    strategy:
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            bin: SecurityModeler.exe
+            asset: SecurityModeler-Setup.exe   # (made by the setup step below: the only Windows file)
+          - name: linux-x64
+            # (the oldest supported Ubuntu: the program then runs on older Linux systems too)
+            os: ubuntu-22.04
+            bin: SecurityModeler
+            asset: SecurityModeler-linux-x64
+          - name: macos-arm64
+            # (Apple Silicon; the linker gives an arm64 program the ad-hoc signature macOS needs to run it)
+            os: macos-15
+            bin: SecurityModeler
+            asset: SecurityModeler-macos-arm64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Build the frontend
-        working-directory: frontend
-        env:
-          APP_VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          npm ci --no-fund --no-audit
-          npm run build
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: launcher
-
-      - name: Build the launcher
-        shell: bash
-        working-directory: launcher
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          # Only the package's own version line, the first in the file.
-          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" Cargo.toml
-          grep -m1 '^version' Cargo.toml
-          cargo build --release
-          mkdir -p ../dist
-          cp target/release/SecurityModeler.exe ../dist/SecurityModeler.exe
-          cd ../dist
-          sha256sum SecurityModeler.exe > SecurityModeler.exe.sha256
-          cat SecurityModeler.exe.sha256
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows
-          path: dist/*
-
-  linux:
-    needs: version
-    # The oldest supported runner, so the build runs on older distributions too: a program only
-    # needs a glibc at least as new as the one it was built against.
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install the libraries the tray icon needs
+      - name: Linux desktop libraries (GTK, app indicator)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - name: Build the frontend
         working-directory: frontend
+        shell: bash
         env:
-          APP_VERSION: ${{ needs.version.outputs.version }}
+          APP_VERSION: ${{ needs.check.outputs.version }}
         run: |
           npm ci --no-fund --no-audit
           npm run build
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: launcher
-
-      - name: Build the launcher
+      - name: Build the program (the app is packed inside)
         working-directory: launcher
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
+        run: cargo build --release --locked
+      - name: Name it for the release
+        shell: bash
         run: |
-          set -euo pipefail
-          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" Cargo.toml
-          grep -m1 '^version' Cargo.toml
-          cargo build --release
-
-      - name: Check that it starts
-        env:
-          SECURITY_MODELER_HOME: ${{ runner.temp }}/smoke
+          mkdir -p dist
+          ./launcher/target/release/${{ matrix.bin }} --version || true
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            cp "launcher/target/release/${{ matrix.bin }}" "dist/${{ matrix.asset }}"
+            chmod +x "dist/${{ matrix.asset }}"
+          fi
+      - name: Windows setup (SecurityModeler-Setup.exe, with its uninstaller)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          set -euo pipefail
-          launcher/target/release/SecurityModeler --version
-          # The real first-run path, without a desktop: setup, start, answer, quit.
-          timeout 600 launcher/target/release/SecurityModeler --headless > smoke.log 2>&1 &
-          for _ in $(seq 1 120); do
-            if grep -q "Running at" smoke.log; then break; fi
-            sleep 5
-          done
-          cat smoke.log
-          url=$(grep -o 'http://127.0.0.1:[0-9]*' smoke.log | head -n1)
-          test -n "$url"
-          curl -fsS "$url/api/catalog" > /dev/null
-          curl -fsS "$url/" | grep -q '<div id="root">'
-          launcher/target/release/SecurityModeler --quit
-          for _ in $(seq 1 30); do
-            pgrep -f "SecurityModeler --headless" > /dev/null || break
-            sleep 1
-          done
-          ! pgrep -f "SecurityModeler --headless"
-          echo "Started, served the app and quit cleanly."
-
-      - name: Package
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /Qp "/DAppVersion=${{ needs.check.outputs.version }}" "/DExe=$PWD\launcher\target\release\SecurityModeler.exe" "/O$PWD\dist" launcher\installer\security-modeler.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: One file per system
+        shell: bash
         run: |
-          set -euo pipefail
-          name="SecurityModeler-$VERSION-linux-x86_64"
-          mkdir -p "dist/$name"
-          cp launcher/target/release/SecurityModeler "dist/$name/"
-          cp launcher/linux/install.sh launcher/linux/security-modeler.desktop LICENSE "dist/$name/"
-          cp launcher/assets/icon.png "dist/$name/security-modeler.png"
-          chmod +x "dist/$name/SecurityModeler" "dist/$name/install.sh"
-          cd dist
-          tar -czf "$name.tar.gz" "$name"
-          rm -r "$name"
-          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-          cat "$name.tar.gz.sha256"
-
+          ls -la dist
+          (( $(ls dist | wc -l) == 1 )) || { echo "::error::a build must give exactly one release file"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
-          name: linux
+          name: ${{ matrix.name }}
           path: dist/*
+          if-no-files-found: error
 
   release:
-    needs: [version, test, windows, linux]
-    if: github.event_name != 'pull_request' && needs.version.outputs.release == 'true' && !contains(github.event.head_commit.message, '[skip release]')
+    name: Publish the release
+    needs: [check, build]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-
-      - name: Publish the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          VERSION: ${{ needs.version.outputs.version }}
+      - name: Three files, one per system
         run: |
-          set -euo pipefail
-          ls -l dist
-          cat > notes.md <<EOF
-          ## Download
-
-          | System | File |
-          |---|---|
-          | Windows 10 or 11 (x64) | \`SecurityModeler.exe\`: run it |
-          | Linux (x86-64) | \`SecurityModeler-$VERSION-linux-x86_64.tar.gz\`: unpack it, then run \`./install.sh\` |
-
-          Check a download against its \`.sha256\` file. First start downloads Python, the local LLM runtime and the default model, about 18 GB in total. See the [README](https://github.com/$REPO#readme) for details.
-
-          Made by Akulav.
-          EOF
-          gh release create "v$VERSION" dist/* \
-            --repo "$REPO" \
-            --title "Security Modeler $VERSION" \
-            --target "$GITHUB_SHA" \
-            --notes-file notes.md \
-            --generate-notes
+          cd dist && sha256sum *
+          (( $(ls | wc -l) == 3 )) || { echo "::error::expected 3 release files"; exit 1; }
+      - name: Release notes (downloads + CHANGELOG.md)
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          BASE: https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}
+        run: |
+          {
+            echo "## Security Modeler $VERSION"
+            echo
+            echo "_Made by **Akulav**: local only, no telemetry, no cloud._"
+            echo
+            echo "One file per system. The same file installs the app and later updates it."
+            echo
+            echo "| System | Download | First start |"
+            echo "| --- | --- | --- |"
+            echo "| Windows 10/11 (x64) | [SecurityModeler-Setup.exe]($BASE/SecurityModeler-Setup.exe) | Asks where to install (no admin rights). Updates reuse that folder. |"
+            echo "| Linux x64 | [SecurityModeler-linux-x64]($BASE/SecurityModeler-linux-x64) | \`chmod +x\` it and run it: it installs itself. |"
+            echo "| macOS Apple Silicon | [SecurityModeler-macos-arm64]($BASE/SecurityModeler-macos-arm64) | \`chmod +x\`, then right-click → Open: it installs itself. |"
+            echo
+            echo "Installed copies update themselves from the app (or its tray icon), checked against GitHub's SHA-256 of each file."
+            echo
+            awk -v v="$VERSION" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} on && /^## / {exit} on {print}' CHANGELOG.md
+            echo
+            echo "<details><summary>SHA-256 checksums</summary>"
+            echo
+            echo '```'
+            (cd dist && sha256sum *)
+            echo '```'
+            echo "</details>"
+          } > notes.md
+          cat notes.md
+      - name: Tag and publish (the tag v<VERSION> is created on this commit)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Security Modeler ${{ needs.check.outputs.version }}
+          body_path: notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
+          make_latest: true

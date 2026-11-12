@@ -1,7 +1,8 @@
 [package]
 name = "security-modeler"
-# Release builds get their version from the git tag (see .github/workflows/release.yml).
-version = "0.0.0"
+# Must equal the VERSION file at the repository root (CI checks it). A push to main that changes VERSION
+# publishes the release v<this> (.github/workflows/release.yml): python tools_dev/bump_version.py X.Y.Z.
+version = "0.2.0"
 edition = "2024"
 description = "Security Modeler"
 license-file = "../LICENSE"

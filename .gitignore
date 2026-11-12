@@ -48,3 +48,8 @@ target/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# What the launcher writes about updates (in the data folder)
+update.json
+update.request
+update.apply

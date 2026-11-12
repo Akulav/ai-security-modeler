@@ -1,13 +1,18 @@
 //! Security Modeler's desktop launcher: sets the app up, runs it in the background, and puts it in
-//! the system tray. The app itself is the web page it opens.
+//! the system tray. The app itself is the web page it opens. It also installs itself on Linux and
+//! macOS (install.rs) and updates itself from GitHub releases on every system (update.rs).
 
 #![windows_subsystem = "windows"]
 
+#[cfg(any(unix, test))]
+mod folder;
+mod install;
 #[cfg_attr(windows, path = "win.rs")]
 #[cfg_attr(unix, path = "unix.rs")]
 mod platform;
 mod server;
 mod setup;
+mod update;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -33,6 +38,8 @@ enum UserEvent {
     Tray(TrayIconEvent),
     Menu(MenuEvent),
     Status(Status),
+    Update(update::Found),
+    UpdateFailed(String),
     Exit,
 }
 
@@ -52,6 +59,9 @@ struct App {
     url: Mutex<Option<String>>,
     backend: Mutex<Option<Child>>,
     quitting: AtomicBool,
+    /// A newer release, once the update check found one.
+    release: Mutex<Option<update::Release>>,
+    updating: AtomicBool,
 }
 
 impl App {
@@ -81,11 +91,48 @@ fn main() {
         platform::request_quit(&home);
         return;
     }
+    if flag("--uninstall") {
+        install::uninstall(&home);
+        return;
+    }
+    if flag("--check-update") {
+        match update::latest() {
+            Ok(r) if update::newer(&r.version, VERSION) => println!("Security Modeler {} is out (this is {VERSION}): {}", r.version, r.page),
+            Ok(r) => println!("Security Modeler {VERSION} is up to date (latest release: {})", r.version),
+            Err(e) => println!("Couldn't check: {e}"),
+        }
+        return;
+    }
     // Without a desktop, such as on a server, there's no tray: it runs in the terminal instead.
     let headless = flag("--headless") || !platform::has_desktop();
     let background = flag("--background") || headless;
 
-    if !platform::first_instance(&home) {
+    // Linux and macOS: a downloaded program installs itself and starts the installed copy.
+    #[cfg(unix)]
+    if !headless && !flag("--here") {
+        let args: Vec<String> = std::env::args().skip(1).filter(|a| a != "--after-update").collect();
+        match install::install_if_needed(&args) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(e) => platform::message(&format!("Couldn't install Security Modeler: {e}\n\nIt runs from here instead."), true),
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        update::clean_up(&exe, &home);
+    }
+    let mut first = platform::first_instance(&home);
+    // Just updated: the old copy may still be letting go of the folder.
+    if !first && (flag("--after-update") || flag("--updated")) {
+        for _ in 0..60 {
+            std::thread::sleep(Duration::from_millis(500));
+            if platform::first_instance(&home) {
+                first = true;
+                break;
+            }
+        }
+    }
+
+    if !first {
         // Already running: just show it.
         match fs::read_to_string(&url_file) {
             Ok(url) if headless => println!("Security Modeler is already running at {}", url.trim()),
@@ -106,6 +153,8 @@ fn main() {
         url: Mutex::new(None),
         backend: Mutex::new(None),
         quitting: AtomicBool::new(false),
+        release: Mutex::new(None),
+        updating: AtomicBool::new(false),
     });
     app.log(&format!("Starting version {VERSION}"));
     if headless {
@@ -132,6 +181,7 @@ fn main() {
     let open = MenuItem::new("Open Security Modeler", false, None);
     let unload = MenuItem::new("Unload the model now", false, None);
     let retry = MenuItem::new("Try again", false, None);
+    let update_item = MenuItem::new("Check for updates", update::managed(), None);
     let folder = MenuItem::new("Open data folder", true, None);
     let logs = MenuItem::new("Open logs", true, None);
     let quit = MenuItem::new("Quit", true, None);
@@ -147,6 +197,7 @@ fn main() {
         &unload,
         &retry,
         &PredefinedMenuItem::separator(),
+        &update_item,
         &folder,
         &logs,
         &PredefinedMenuItem::separator(),
@@ -160,6 +211,14 @@ fn main() {
             begin_quit(app, proxy);
         });
     }
+    if update::managed() {
+        let proxy = proxy.clone();
+        update::watch(home.clone(), move |found| {
+            let _ = proxy.send_event(UserEvent::Update(found));
+        });
+    } else {
+        update::write_state(&home, None, "", "built from source");
+    }
 
     let mut tray: Option<TrayIcon> = None;
     let mut menu = Some(menu);
@@ -170,6 +229,8 @@ fn main() {
             Event::NewEvents(StartCause::Init) => {
                 let icon = tray_icon();
                 let mut builder = TrayIconBuilder::new()
+                    // (Linux: the icon file the tray reads stays in the home folder, not in /tmp)
+                    .with_temp_dir_path(app.home.join("cache").join("tray"))
                     .with_tooltip("Security Modeler: starting")
                     .with_menu(Box::new(menu.take().unwrap()))
                     // Left click opens the app; right click shows the menu.
@@ -216,6 +277,14 @@ fn main() {
                     platform::open(&app.home.to_string_lossy());
                 } else if event.id == logs.id() {
                     platform::open(&app.home.join("logs").to_string_lossy());
+                } else if event.id == update_item.id() {
+                    if app.release.lock().unwrap().is_some() {
+                        update_item.set_enabled(false);
+                        begin_update(app.clone(), proxy.clone());
+                    } else {
+                        update_item.set_text("Checking for updates…");
+                        let _ = fs::write(update::request_file(&app.home), b"");
+                    }
                 } else if event.id == author.id() {
                     platform::open(REPOSITORY);
                 } else if event.id == quit.id() {
@@ -245,6 +314,33 @@ fn main() {
                         platform::open(&url);
                     }
                 }
+            }
+            Event::UserEvent(UserEvent::Update(found)) => match found {
+                update::Found::Newer(release) => {
+                    update_item.set_text(format!("Update to {}", release.version));
+                    if let Some(tray) = &tray {
+                        let _ = tray.set_tooltip(Some(format!("Security Modeler: version {} is available", release.version)));
+                    }
+                    *app.release.lock().unwrap() = Some(release);
+                }
+                update::Found::Nothing => {
+                    if app.release.lock().unwrap().is_none() {
+                        update_item.set_text("Check for updates (up to date)");
+                    }
+                }
+                update::Found::Apply => {
+                    if app.release.lock().unwrap().is_some() {
+                        update_item.set_enabled(false);
+                        begin_update(app.clone(), proxy.clone());
+                    } else {
+                        let _ = fs::write(update::request_file(&app.home), b"");
+                    }
+                }
+            },
+            Event::UserEvent(UserEvent::UpdateFailed(reason)) => {
+                update_item.set_enabled(true);
+                status.set_text("Update failed: see the message");
+                std::thread::spawn(move || platform::message(&format!("Security Modeler couldn't update.\n\n{reason}"), true));
             }
             Event::UserEvent(UserEvent::Exit) => {
                 // Removing the icon first, so no stale icon is left in the tray.
@@ -336,6 +432,44 @@ fn begin_quit(app: Arc<App>, proxy: EventLoopProxy<UserEvent>) {
     let _ = proxy.send_event(UserEvent::Status(Status::Quitting));
     std::thread::spawn(move || {
         shutdown(&app);
+        let _ = proxy.send_event(UserEvent::Exit);
+    });
+}
+
+/// Downloads and checks the newer release while the app keeps running, then quits the app and hands over to the
+/// setup (Windows) or the new program (Linux, macOS), which starts the app again.
+fn begin_update(app: Arc<App>, proxy: EventLoopProxy<UserEvent>) {
+    let Some(release) = app.release.lock().unwrap().clone() else { return };
+    if app.updating.swap(true, Ordering::SeqCst) || app.quitting.load(Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let say = |text: &str| {
+            let _ = proxy.send_event(UserEvent::Status(Status::Preparing(text.to_string())));
+        };
+        say(&format!("Downloading {}", release.version));
+        let next = match update::prepare(&app.home, &release, &|text| say(text)) {
+            Ok(next) => next,
+            Err(reason) => {
+                app.log(&format!("Update failed: {reason}"));
+                update::write_state(&app.home, Some(&release), &reason, "update failed");
+                app.updating.store(false, Ordering::SeqCst);
+                let _ = proxy.send_event(UserEvent::Status(if app.url().is_some() { Status::Running } else { Status::Preparing("Starting".into()) }));
+                let _ = proxy.send_event(UserEvent::UpdateFailed(reason));
+                return;
+            }
+        };
+        app.log(&format!("Updating from {VERSION} to {}", release.version));
+        update::write_state(&app.home, Some(&release), "", "installing");
+        app.quitting.store(true, Ordering::SeqCst);
+        let _ = proxy.send_event(UserEvent::Status(Status::Preparing(format!("Installing {}", release.version))));
+        shutdown(&app);
+        #[cfg(unix)]
+        platform::release_instance(&app.home);
+        if let Err(reason) = update::finish(&app.home, &next) {
+            app.log(&format!("Update failed: {reason}"));
+            platform::message(&format!("Security Modeler couldn't update: {reason}\n\nStart it again to carry on."), true);
+        }
         let _ = proxy.send_event(UserEvent::Exit);
     });
 }

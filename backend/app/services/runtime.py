@@ -32,8 +32,9 @@ DOWNLOADS_DIR = LLM_DIR / "downloads"
 LOG_FILE = LLM_DIR / "ollama.log"
 PID_FILE = LLM_DIR / "ollama.pid"
 IS_WINDOWS = sys.platform == "win32"
-# The Windows zip has the program at its top; the Linux archive has it under bin/.
-EXECUTABLE = BIN_DIR / "ollama.exe" if IS_WINDOWS else BIN_DIR / "bin" / "ollama"
+IS_MAC = sys.platform == "darwin"
+# The Windows zip and the macOS archive have the program at their top; the Linux archive has it under bin/.
+EXECUTABLE = BIN_DIR / "ollama.exe" if IS_WINDOWS else BIN_DIR / "ollama" if IS_MAC else BIN_DIR / "bin" / "ollama"
 LINUX_ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
 
@@ -49,6 +50,9 @@ def _assets() -> list[str]:
     if IS_WINDOWS:
         # The ROCm add-on is small and enables AMD GPUs; Ollama ignores it on other hardware.
         return ["ollama-windows-amd64.zip", "ollama-windows-amd64-rocm.zip"]
+    if sys.platform == "darwin":
+        # One archive for Apple Silicon and Intel Macs; it uses Metal on Apple Silicon.
+        return ["ollama-darwin.tgz"]
     architecture = LINUX_ARCHITECTURES.get(platform.machine().lower())
     if sys.platform != "linux" or architecture is None:
         return []
@@ -123,17 +127,28 @@ def _end_with_parent() -> None:
 
 def _process_path(pid: int) -> str:
     """The program a running process was started from, or an empty string."""
+    if IS_MAC:
+        result = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True, check=False)
+        return result.stdout.strip()
     if not IS_WINDOWS:
         try:
             return os.readlink(f"/proc/{pid}/exe")
         except OSError:
             return ""
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", f"(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path"],
-        capture_output=True, text=True, check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    return result.stdout.strip()
+    # A direct call rather than PowerShell, which writes caches of its own into the user's profile.
+    kernel32 = _kernel32()
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32)]
+    process = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not process:
+        return ""
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = ctypes.c_uint32(len(buffer))
+        ok = kernel32.QueryFullProcessImageNameW(process, 0, buffer, ctypes.byref(size))
+        return buffer.value if ok else ""
+    finally:
+        kernel32.CloseHandle(process)
 
 
 class _BasicLimits(ctypes.Structure):
@@ -231,9 +246,15 @@ def _extract(archives: list[Path], destination: Path) -> None:
                 with tarfile.open(fileobj=stream, mode="r|") as bundle:
                     # "data" refuses paths outside the folder, links out of it and special files.
                     bundle.extractall(temporary, filter="data")
+        elif archive.name.endswith(".tgz"):
+            with tarfile.open(archive, mode="r:gz") as bundle:
+                bundle.extractall(temporary, filter="data")
         else:
             with zipfile.ZipFile(archive) as bundle:
                 bundle.extractall(temporary)
+    # (should a macOS archive ever put the program under bin/ as the Linux one does)
+    if IS_MAC and not (temporary / "ollama").exists() and (temporary / "bin" / "ollama").exists():
+        (temporary / "ollama").symlink_to(Path("bin") / "ollama")
     shutil.rmtree(destination, ignore_errors=True)
     temporary.rename(destination)
 
@@ -383,7 +404,7 @@ class RuntimeManager:
             return
         if not ASSETS:
             raise RuntimeError_(
-                f"Automatic setup supports Windows and Linux on x86-64 or ARM64, not {sys.platform} on "
+                f"Automatic setup supports Windows, macOS and Linux on x86-64 or ARM64, not {sys.platform} on "
                 f"{platform.machine()}. Set LLM_AUTO_SETUP=false and run Ollama yourself."
             )
 

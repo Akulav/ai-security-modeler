@@ -3,6 +3,7 @@ import { type FormEvent, useState } from "react";
 import type { Catalog } from "../types";
 import { CATEGORY_COLORS, FALLBACK_ICON, NODE_ICONS } from "../visuals";
 import NodeFields, { draftForType, EMPTY_DRAFT, type NodeDraft } from "./NodeFields";
+import UpdateNotice from "./UpdateNotice";
 
 interface Props {
   catalog: Catalog;
@@ -31,6 +32,7 @@ export default function Sidebar({ catalog, onCreate }: Props) {
             <a href="https://github.com/Akulav/ai-security-modeler" target="_blank" rel="noopener noreferrer">Akulav</a>
             {" · "}{__APP_VERSION__ === "dev" ? "dev" : `v${__APP_VERSION__}`}
           </span>
+          <UpdateNotice />
         </div>
       </div>
 

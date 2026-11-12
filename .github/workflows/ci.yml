@@ -1,0 +1,90 @@
+name: CI
+
+# Every push and pull request: the backend tests, the frontend type check and build, and the launcher (clippy, its
+# tests, and the Windows setup compiling) on Windows, Linux and macOS. Releases are release.yml's job.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Versions agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: VERSION and launcher/Cargo.toml carry the same number
+        run: |
+          v="$(tr -d ' \r\n' < VERSION)"
+          c="$(sed -n 's/^version = "\(.*\)"/\1/p' launcher/Cargo.toml | head -n1)"
+          echo "VERSION=$v  Cargo.toml=$c"
+          test "$v" = "$c"
+
+  tests:
+    name: Backend tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - working-directory: backend
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q
+
+  launcher:
+    name: Launcher (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux desktop libraries (GTK, app indicator)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend type check and build (the launcher packs it)
+        working-directory: frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher
+      - working-directory: launcher
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - working-directory: launcher
+        run: cargo test --locked
+      - name: The Windows setup compiles
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build --locked --manifest-path launcher\Cargo.toml
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /Qp "/DAppVersion=0.0.0" "/DExe=$PWD\launcher\target\debug\SecurityModeler.exe" "/O$env:RUNNER_TEMP" launcher\installer\security-modeler.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

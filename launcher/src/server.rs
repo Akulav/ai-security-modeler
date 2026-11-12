@@ -35,6 +35,7 @@ pub fn start(home: &Path, runtime: &Runtime, port: u16, token: &str) -> Result<C
     let errors = output.try_clone().map_err(|error| error.to_string())?;
     let mut command = Command::new(&runtime.python);
     platform::prepare_child(&mut command);
+    crate::setup::contain(&mut command, home);
     command
         // -s leaves out packages from the user's own Python.
         .args(["-s", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", &port.to_string()])

@@ -15,16 +15,20 @@ const PAYLOAD_HASH: &str = env!("PAYLOAD_HASH");
 const UV_VERSION: &str = "0.9.7";
 #[cfg(windows)]
 const UV_TRIPLE: &str = "x86_64-pc-windows-msvc";
-#[cfg(all(unix, target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const UV_TRIPLE: &str = "x86_64-unknown-linux-gnu";
-#[cfg(all(unix, target_arch = "aarch64"))]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const UV_TRIPLE: &str = "aarch64-unknown-linux-gnu";
+#[cfg(target_os = "macos")]
+const UV_TRIPLE: &str = "aarch64-apple-darwin";
 #[cfg(windows)]
 const UV_ASSET: &str = "uv-x86_64-pc-windows-msvc.zip";
-#[cfg(all(unix, target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const UV_ASSET: &str = "uv-x86_64-unknown-linux-gnu.tar.gz";
-#[cfg(all(unix, target_arch = "aarch64"))]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const UV_ASSET: &str = "uv-aarch64-unknown-linux-gnu.tar.gz";
+#[cfg(target_os = "macos")]
+const UV_ASSET: &str = "uv-aarch64-apple-darwin.tar.gz";
 const PYTHON_VERSION: &str = "3.13";
 
 pub struct Runtime {
@@ -146,12 +150,17 @@ fn get_packages(home: &Path, uv: &Path, python: &Path, app: &Path, report: &dyn 
 fn uv_command(home: &Path, uv: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new(uv);
     platform::prepare_child(&mut command);
+    contain(&mut command, home);
     let output = command
         .args(args)
         // Kept inside the home folder, and unaffected by any uv the user has configured.
         .env("UV_PYTHON_INSTALL_DIR", home.join("python"))
         .env("UV_CACHE_DIR", home.join("cache").join("uv"))
         .env("UV_NO_CONFIG", "1")
+        // Nothing outside the folder: no python3.x shims in ~/.local/bin, no Python entry in the Windows registry.
+        .env("UV_PYTHON_INSTALL_BIN", "0")
+        .env("UV_PYTHON_INSTALL_REGISTRY", "0")
+        .env("UV_TOOL_DIR", home.join("cache").join("uv-tools"))
         .env_remove("VIRTUAL_ENV")
         .output()
         .map_err(|error| format!("Couldn't run uv: {error}"))?;
@@ -165,6 +174,22 @@ fn uv_command(home: &Path, uv: &Path, args: &[&str]) -> Result<String, String> {
         args.first().unwrap_or(&""),
         tail.into_iter().rev().collect::<Vec<_>>().join("\n")
     ))
+}
+
+/// Everything uv, Python and the LLM runtime write goes into the home folder, nowhere else on the computer:
+/// temporary files, pip's and uv's caches, the per-user site folder. (Ollama gets its own home there as well:
+/// backend/app/services/runtime.py.)
+pub fn contain(command: &mut Command, home: &Path) {
+    let tmp = home.join("cache").join("tmp");
+    let _ = fs::create_dir_all(&tmp);
+    command
+        .env("TMP", &tmp)
+        .env("TEMP", &tmp)
+        .env("TMPDIR", &tmp)
+        .env("PIP_CACHE_DIR", home.join("cache").join("pip"))
+        .env("PYTHONUSERBASE", home.join("cache").join("userbase"))
+        .env("PYTHONNOUSERSITE", "1")
+        .env("MPLCONFIGDIR", home.join("cache").join("matplotlib"));
 }
 
 fn download(url: &str) -> Result<Vec<u8>, String> {

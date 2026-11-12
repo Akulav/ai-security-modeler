@@ -62,15 +62,17 @@ Instead of a job object, each child leads its own process group and is stopped b
 
 ## Releases
 
-`.github/workflows/release.yml` runs on every push to `main`. It tests the backend on Windows and Linux, builds the Windows exe and the Linux package, starts the Linux build headless to check it serves the app and quits cleanly, then publishes one GitHub release with both, tagged with the next version. Versions come from tags, so there's nothing to edit or commit by hand. The commit messages since the last release decide the next one:
+The version lives in `VERSION` (and `launcher/Cargo.toml`, which CI checks agrees). To release:
 
-| Commits include | Version change |
-|---|---|
-| `BREAKING CHANGE` in a body, or `!` after the type, such as `feat!:` | Major |
-| A message starting with `feat:` | Minor |
-| Anything else | Patch |
+1. `python tools_dev/bump_version.py 0.3.0` sets both (and `Cargo.lock`) and opens a section in `CHANGELOG.md`.
+2. Fill in the changelog, commit and push to `main`.
 
-To choose the change yourself, run the workflow from the Actions tab and pick one. Add `[skip release]` to a commit message to build without releasing. Pull requests are tested and built, and their builds are attached to the run, but they aren't released.
+`.github/workflows/release.yml` then runs, when `VERSION` changed and the tag `v0.3.0` doesn't exist yet: it tests the
+backend, builds the program for Windows, Linux and macOS (Apple Silicon), wraps the Windows one in the Inno Setup
+installer (`launcher/installer/security-modeler.iss`), tags the commit and publishes exactly three files,
+`SecurityModeler-Setup.exe`, `SecurityModeler-linux-x64` and `SecurityModeler-macos-arm64`, with the changelog's notes.
+Each file both installs and updates; installed copies find the release by themselves (`launcher/src/update.rs`).
+`.github/workflows/ci.yml` tests and builds every push and pull request on all three systems.
 
 ## Checks
 

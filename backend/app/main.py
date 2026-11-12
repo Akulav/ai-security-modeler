@@ -11,7 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import PROJECT_ROOT
 from .database import init_db
-from .routers import analysis, graph, hibp, launcher, llm
+from .routers import analysis, graph, hibp, launcher, llm, update
 from .services.runtime import manager
 
 FRONTEND_DIST: Path = PROJECT_ROOT / "frontend" / "dist"
@@ -43,6 +43,7 @@ app.include_router(hibp.router)
 app.include_router(analysis.router)
 app.include_router(llm.router)
 app.include_router(launcher.router)
+app.include_router(update.router)
 
 if FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")

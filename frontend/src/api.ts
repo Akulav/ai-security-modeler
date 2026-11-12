@@ -2,6 +2,17 @@ import type {
   AnalysisEvent, AnalysisReport, BlastRadius, Catalog, Graph, GraphEdge, GraphNode, LlmStatus, Question, QuestionEvent,
 } from "./types";
 
+export interface UpdateStatus {
+  managed: boolean;
+  current: string | null;
+  latest: string | null;
+  newer: boolean;
+  notes: string;
+  page: string;
+  state: string;
+  error: string;
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
     super(message);
@@ -65,6 +76,10 @@ export const api = {
   setIdleUnload: (seconds: number) => request<void>("/llm/idle", json("POST", { seconds })),
   finishResearch: () => request<void>("/analysis/finish-research", { method: "POST" }),
   latestReport: () => request<AnalysisReport | null>("/analysis/latest"),
+  updateStatus: () => request<UpdateStatus>("/update"),
+  // The header shows the request comes from this page (backend/app/routers/update.py).
+  checkUpdate: () => fetch("/api/update/check", { method: "POST", headers: { "X-Security-Modeler": "1" } }),
+  installUpdate: () => fetch("/api/update/install", { method: "POST", headers: { "X-Security-Modeler": "1" } }),
 
   questions: () => request<Question[]>("/analysis/questions"),
   ask: (

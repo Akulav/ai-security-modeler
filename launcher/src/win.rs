@@ -72,9 +72,20 @@ pub fn prepare_child(command: &mut Command) {
     command.creation_flags(NO_WINDOW);
 }
 
+/// Starts a program that outlives the launcher (the update's setup), without a console window.
+pub fn detach(command: &mut Command) {
+    command.creation_flags(0x0000_0008 | 0x0000_0200); // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+}
+
+/// The folder the setup installed into (it holds the setup's uninstaller), or the usual one.
 pub fn home() -> PathBuf {
     if let Some(custom) = std::env::var_os("SECURITY_MODELER_HOME") {
         return PathBuf::from(custom);
+    }
+    if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf))
+        && dir.join("unins000.exe").exists()
+    {
+        return dir;
     }
     let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     local.join("SecurityModeler")
@@ -91,7 +102,15 @@ pub fn first_instance(_home: &Path) -> bool {
     unsafe {
         // Never closed: Windows releases it when this process exits.
         let mutex = CreateMutexW(null(), 0, name.as_ptr());
-        !mutex.is_null() && GetLastError() != ERROR_ALREADY_EXISTS
+        if mutex.is_null() {
+            return false;
+        }
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            // Not ours: let go of it, or it would outlive the copy that made it.
+            CloseHandle(mutex);
+            return false;
+        }
+        true
     }
 }
 
