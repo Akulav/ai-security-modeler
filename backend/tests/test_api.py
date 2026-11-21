@@ -181,25 +181,6 @@ def test_apps_node_lists_apps_that_depend_on_the_device(client):
     assert sorted(n["name"] for n in client.get("/api/graph").json()["nodes"]) == ["GitHub", "Phone"]
 
 
-def test_old_os_nodes_become_the_device_os_field(client):
-    graph = {
-        "nodes": [
-            {"id": "phone", "type": "smartphone", "name": "Phone"},
-            {"id": "os", "type": "os", "name": "iOS 17"},
-            {"id": "app", "type": "application", "name": "Authy"},
-        ],
-        "edges": [
-            {"source_id": "os", "target_id": "phone", "relation": "installed_on"},
-            {"source_id": "app", "target_id": "os", "relation": "runs_on"},
-        ],
-    }
-    result = client.post("/api/import", json=graph).json()
-    by_name = {n["name"]: n for n in result["nodes"]}
-    assert set(by_name) == {"Phone", "Authy"}
-    assert by_name["Phone"]["os"] == "ios" and by_name["Phone"]["os_version"] == "17"
-    assert [(e["source_id"], e["target_id"]) for e in result["edges"]] == [(by_name["Authy"]["id"], by_name["Phone"]["id"])]
-
-
 def test_edges_validate_and_cascade(client):
     a, b = make_node(client, "A", type="application"), make_node(client, "B")
     payload = {"source_id": a["id"], "target_id": b["id"], "relation": "provides_totp"}

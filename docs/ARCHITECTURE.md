@@ -111,12 +111,13 @@ All routes are under `/api`. Interactive documentation is at http://127.0.0.1:80
 
 Streamed routes return newline-delimited JSON events such as `status`, `search`, `answer` and `done`.
 
-## Startup upgrades
+## Consistency rules
 
-`init_db` adds missing columns, after making a timestamped backup, and then applies upgrades that are safe to repeat:
+`init_db` creates the tables, then applies rules from `upgrades.py` that are safe to repeat (they also run after an
+import):
 
-- folding old OS nodes into their device's OS field
 - blanking fields a node's type doesn't have
 - merging password and TOTP link pairs
 
-To add a column, add it to the model and to `NEW_NODE_COLUMNS` in `upgrades.py`.
+There is no column migration yet: every released map has the current shape. A future column change needs a
+backup-then-`ALTER TABLE` step in `upgrades.py`, run from `init_db`.

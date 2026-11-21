@@ -27,8 +27,6 @@ Each relationship also states which node types it makes sense between, so nonsen
 from dataclasses import asdict, dataclass
 
 APP_GROUP = "app_group"
-# Replaced by the OS field on devices. Still accepted so older files can be imported and upgraded.
-LEGACY_OS_TYPE = "os"
 
 NODE_CATEGORIES: dict[str, dict] = {
     "hardware": {"label": "Hardware", "types": {
@@ -66,7 +64,6 @@ NODE_TYPES: dict[str, str] = {
     for category_id, category in NODE_CATEGORIES.items()
     for type_id in category["types"]
 }
-ACCEPTED_NODE_TYPES = {*NODE_TYPES, LEGACY_OS_TYPE}
 
 COMPUTERS = {"desktop", "laptop", "tablet", "smartphone", "nas_server", "smart_tv"}
 NETWORK_GEAR = {t for t, c in NODE_TYPES.items() if c == "network"}
@@ -97,7 +94,6 @@ NODE_FIELDS: dict[str, list[str]] = {
     **{t: ["email", "password_type", "status"] for t in ACCOUNTS},
     "local_server_account": ["password_type", "status"],
     **{t: ["encryption"] for t in DATA},
-    LEGACY_OS_TYPE: [],
 }
 FIELD_DEFAULTS = {
     "ip_address": None, "email": None, "os": None, "os_version": None,

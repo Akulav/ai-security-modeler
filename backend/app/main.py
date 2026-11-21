@@ -3,9 +3,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -37,6 +37,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+ALLOWED_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+}
+
+
+@app.middleware("http")
+async def same_site_only(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """CORS stops other sites reading answers, not sending a form POST (no preflight). A change whose Origin is
+    another site is refused before it reaches a route; the app's own pages send their own origin or none."""
+    origin = request.headers.get("origin")
+    if request.method not in ("GET", "HEAD", "OPTIONS") and origin:
+        own = f"{request.url.scheme}://{request.headers.get('host', '')}"
+        if origin != own and origin not in ALLOWED_ORIGINS:
+            return JSONResponse({"detail": "That request came from another site."}, status_code=403)
+    response = await call_next(request)
+    for key, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(key, value)
+    return response
+
 
 app.include_router(graph.router)
 app.include_router(hibp.router)

@@ -32,12 +32,10 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 def init_db() -> None:
     from . import models  # noqa: F401  (registers tables on Base)
-    from .upgrades import add_missing_columns, apply_type_rules_to_all, fold_os_nodes, merge_password_totp_edges
+    from .upgrades import apply_type_rules_to_all, merge_password_totp_edges
 
     Base.metadata.create_all(engine)
-    add_missing_columns(engine)
     with SessionLocal() as session:
-        fold_os_nodes(session)
         apply_type_rules_to_all(session)
         merge_password_totp_edges(session)
 

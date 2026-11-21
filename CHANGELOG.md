@@ -4,6 +4,17 @@ All notable changes. Versions follow [semantic versioning](https://semver.org): 
 `launcher/Cargo.toml`), and a release is published by itself when a push to `main` changes `VERSION`
 (`.github/workflows/release.yml`, which also creates the tag `v<VERSION>`).
 
+## [0.2.1] - 2026-11-21
+
+### Security
+- A change sent by a page of another website open in your browser (a form POST needs no CORS preflight) is now
+  refused before it reaches the map.
+- Every answer carries a Content-Security-Policy, `nosniff`, `Referrer-Policy` and `frame-ancestors 'none'`.
+
+### Removed
+- Upgrade code for maps made before the first release (missing columns, the old "OS" node type). Every 0.1 and 0.2
+  map opens as before. 
+
 ## [0.2.0] - 2026-11-12
 
 ### Three systems, one file each

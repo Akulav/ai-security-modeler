@@ -9,7 +9,7 @@ from ..models import Edge, Node
 from ..schemas import (EdgeCreate, EdgeOut, EdgeUpdate, GraphImport, GraphOut, NodeCreate, NodeOut, NodeUpdate)
 from ..seed import seed_payload
 from ..services.graph_engine import blast_radius
-from ..upgrades import COMBINED, apply_type_rules, fold_os_nodes, link_email_to_accounts, merge_password_totp_edges
+from ..upgrades import COMBINED, apply_type_rules, link_email_to_accounts, merge_password_totp_edges
 
 router = APIRouter(prefix="/api", tags=["graph"])
 
@@ -202,7 +202,6 @@ def _replace_graph(db: Session, payload: GraphImport) -> None:
             "target_id": new_nodes[item.target_id].id,
         }))
     db.commit()
-    fold_os_nodes(db)
     merge_password_totp_edges(db)
 
 

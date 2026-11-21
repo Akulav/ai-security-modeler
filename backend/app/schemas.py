@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from .catalog import ACCEPTED_NODE_TYPES, OPERATING_SYSTEMS, PASSWORD_TYPES, RELATIONS
+from .catalog import NODE_TYPES, OPERATING_SYSTEMS, PASSWORD_TYPES, RELATIONS
 
 SecurityLevel = Literal["low", "medium", "high", "critical"]
 Encryption = Literal["unknown", "none", "encrypted"]
@@ -20,7 +20,7 @@ def _known_os(value: str | None) -> str | None:
 
 
 def _known_node_type(value: str) -> str:
-    if value not in ACCEPTED_NODE_TYPES:
+    if value not in NODE_TYPES:
         raise ValueError(f"unknown node type '{value}'")
     return value
 
